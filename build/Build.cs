@@ -108,15 +108,21 @@ class Build : NukeBuild
             .DependsOn(Pack, CreateAndPushGitTag)
             .Executes(() =>
             {
-                DotNetTasks.DotNetNuGetPush(s => s
-                    .SetSource($"{GiteaNugetSourceName}")
-                    .SetApiKey(NuGetApiKey)
-                    .SetTargetPath(NuGetPackagesDirectory / $"{LibraryProjectName}.{Version}.snupkg"));
+                Directory.GetFiles(NuGetPackagesDirectory, "*.*").ToList().ForEach(nupkg =>
+                {
+                    Log.Debug("Found nupkg: {nupkg}", nupkg);
+                });
 
                 DotNetTasks.DotNetNuGetPush(s => s
                      .SetSource($"{GiteaNugetSourceName}")
                      .SetApiKey(NuGetApiKey)
                      .SetTargetPath(NuGetPackagesDirectory / $"{LibraryProjectName}.{Version}.nupkg"));
+
+                // No need to push snupkg as it is pushed with nupkg
+                //DotNetTasks.DotNetNuGetPush(s => s
+                //    .SetSource($"{GiteaNugetSourceName}")
+                //    .SetApiKey(NuGetApiKey)
+                //    .SetTargetPath(NuGetPackagesDirectory / $"{LibraryProjectName}.{Version}.snupkg"));
             });
 
     Target CreateAndPushGitTag => _ => _

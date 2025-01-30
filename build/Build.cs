@@ -97,6 +97,8 @@ class Build : NukeBuild
                     .SetProject(SourceDirectory / "Universley.OrleansContrib.StreamsProvider.Redis" / $"{LibraryProjectName}.csproj")
                     .SetConfiguration(Configuration)
                     .SetOutputDirectory(NuGetPackagesDirectory)
+                    .EnableIncludeSymbols()
+                    .SetSymbolPackageFormat(DotNetSymbolPackageFormat.snupkg)
                     .SetVersion(Version)
                     .SetNoBuild(true)
                  );
@@ -107,12 +109,13 @@ class Build : NukeBuild
             .Executes(() =>
             {
                 DotNetTasks.DotNetNuGetPush(s => s
-                    .SetSource($"{GiteaNugetSourceName}/symbols")
+                    .SetSource($"{GiteaNugetSourceName}")
                     .SetApiKey(NuGetApiKey)
                     .SetTargetPath(NuGetPackagesDirectory / $"{LibraryProjectName}.{Version}.snupkg"));
 
                 DotNetTasks.DotNetNuGetPush(s => s
-                     .SetSource($"{GiteaNugetSourceName}/index.json")
+                     .SetSource($"{GiteaNugetSourceName}")
+                     .SetApiKey(NuGetApiKey)
                      .SetTargetPath(NuGetPackagesDirectory / $"{LibraryProjectName}.{Version}.nupkg"));
             });
 

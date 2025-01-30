@@ -1,0 +1,49 @@
+name: CI Build
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**/*.md'
+      - '**/*.gitignore'
+      - '**/*.gitattributes'
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+permissions:
+  contents: write
+  packages: write
+
+env:
+  DOTNET_NOLOGO: true                     # Disable the .NET logo
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true # Disable the .NET first time experience
+  DOTNET_CLI_TELEMETRY_OPTOUT: true       # Disable sending .NET CLI telemetry
+  MINOR_VERSION_OVERRIDE: 0
+
+  NUGET_SOURCE_NAME: ${{ vars.V_NUGET_SOURCE_NAME }}
+  NUGET_API_KEY: ${{ secrets.S_NUGET_API_KEY }}
+
+
+jobs:
+  build-ci:
+    runs-on: [ ubuntu-latest ]
+    name: CI Build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.x
+
+      - name: Make Build File Executable
+        shell: bash
+        run: |
+          chmod +x ./build.cmd
+          chmod +x ./build.sh
+
+      - name: Run Nuke Build
+        shell: bash
+        run: |
+         ./build.cmd -Target Publish

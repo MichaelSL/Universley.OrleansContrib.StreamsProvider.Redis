@@ -84,5 +84,12 @@ namespace RedisStreamsProvider.UnitTests
             Assert.NotNull(mapper);
             Assert.IsType<HashRingBasedStreamQueueMapper>(mapper);
         }
+
+        [Fact]
+        public void Create_ShouldThrowException_WhenServiceProviderIsNull()
+        {
+            // Act & Assert
+            Assert.Throws<ArgumentNullException>(() => RedisStreamFactory.Create(null, _providerName));
+        }
     }
 }

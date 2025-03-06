@@ -126,5 +126,28 @@ namespace RedisStreamsProvider.UnitTests
             // Act & Assert
             Assert.Throws<ArgumentException>(() => token.CompareTo(invalidToken));
         }
+
+        [Fact]
+        public void Constructor_ShouldThrowArgumentException_ForInvalidRedisValue()
+        {
+            // Arrange
+            var invalidRedisValue = new RedisValue("invalid");
+
+            // Act & Assert
+            Assert.Throws<ArgumentException>(() => new RedisStreamSequenceToken(invalidRedisValue));
+        }
+
+        [Fact]
+        public void Equals_ShouldReturnFalse_ForNullToken()
+        {
+            // Arrange
+            var token = new RedisStreamSequenceToken(123, 456);
+
+            // Act
+            var result = token.Equals(null);
+
+            // Assert
+            Assert.False(result);
+        }
     }
 }

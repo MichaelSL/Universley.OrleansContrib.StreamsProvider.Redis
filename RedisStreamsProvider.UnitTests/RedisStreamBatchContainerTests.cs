@@ -70,6 +70,22 @@ namespace RedisStreamsProvider.UnitTests
             Assert.False(result);
         }
 
+        [Fact]
+        public void Constructor_ShouldThrowArgumentNullException_ForInvalidStreamEntry()
+        {
+            // Arrange
+            var invalidStreamEntry = new StreamEntry("1-0", new NameValueEntry[]
+            {
+                new NameValueEntry("namespace", ""),
+                new NameValueEntry("key", ""),
+                new NameValueEntry("type", ""),
+                new NameValueEntry("data", "")
+            });
+
+            // Act & Assert
+            Assert.Throws<ArgumentNullException>(() => new RedisStreamBatchContainer(invalidStreamEntry));
+        }
+
         private class TestEvent
         {
             public int Id { get; set; }

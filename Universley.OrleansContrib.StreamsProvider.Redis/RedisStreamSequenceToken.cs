@@ -13,10 +13,14 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
 
         public RedisStreamSequenceToken(RedisValue id)
         {
-
-            var split = id.ToString().Split("-");
-            SequenceNumber = long.Parse(split[0]);
-            EventIndex = int.Parse(split[1]);
+            [System.Diagnostics.CodeAnalysis.DoesNotReturn]  static void ThrowArgumentException() => throw new ArgumentException(message: $"Invalid {nameof(id)}", paramName: nameof(id));
+            var redisValueId = id.ToString();
+            
+            var splitIndex = redisValueId.IndexOf('-');  
+            if (splitIndex < 0) 
+                ThrowArgumentException();  
+            SequenceNumber = long.Parse(redisValueId.AsSpan(0, splitIndex));  
+            EventIndex = int.Parse(redisValueId.AsSpan(splitIndex+1));
         }
         public RedisStreamSequenceToken(long sequenceNumber, int eventIndex)
         {

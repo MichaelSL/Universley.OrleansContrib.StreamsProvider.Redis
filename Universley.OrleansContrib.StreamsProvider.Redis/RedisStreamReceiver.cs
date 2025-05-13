@@ -12,6 +12,9 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         private readonly ILogger<RedisStreamReceiver> _logger;
         private string _lastId = "0";
         private Task? pendingTasks;
+        private DateTimeOffset _lastTrimTime = DateTimeOffset.UtcNow;
+        private const int MaxStreamLength = 1000;
+        private const int TrimTimeMinutes = 5;
 
         public RedisStreamReceiver(QueueId queueId, IDatabase database, ILogger<RedisStreamReceiver> logger)
         {
@@ -28,6 +31,8 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
                 pendingTasks = events;
                 _lastId = ">";
                 var batches = (await events).Select(e => new RedisStreamBatchContainer(e)).ToList<IBatchContainer>();
+                await TrimStreamIfNeeded();
+
                 return batches;
             }
             catch (Exception ex)
@@ -41,6 +46,22 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             }
 
 
+        }
+
+        protected virtual async Task TrimStreamIfNeeded()
+        {
+            if (DateTimeOffset.UtcNow - _lastTrimTime > TimeSpan.FromMinutes(TrimTimeMinutes))
+            {
+                try
+                {
+                    var trim = await _database.StreamTrimAsync(_queueId.ToString(), MaxStreamLength, useApproximateMaxLength: true);
+                    _lastTrimTime = DateTimeOffset.UtcNow;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error trimming stream {QueueId}", _queueId);
+                }
+            }
         }
 
         public async Task Initialize(TimeSpan timeout)

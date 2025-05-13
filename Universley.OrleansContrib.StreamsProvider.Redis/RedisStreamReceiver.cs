@@ -1,7 +1,7 @@
 ﻿using Microsoft.Extensions.Logging;
 using Orleans.Streams;
 using StackExchange.Redis;
-
+using System; // Added for TimeProvider
 
 namespace Universley.OrleansContrib.StreamsProvider.Redis
 {
@@ -12,15 +12,25 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         private readonly ILogger<RedisStreamReceiver> _logger;
         private string _lastId = "0";
         private Task? pendingTasks;
-        private DateTimeOffset _lastTrimTime = DateTimeOffset.UtcNow;
-        private const int MaxStreamLength = 1000;
-        private const int TrimTimeMinutes = 5;
+        private DateTimeOffset _lastTrimTime;
+        public const int MaxStreamLength = 1000;
+        public const int TrimTimeMinutes = 5;
 
-        public RedisStreamReceiver(QueueId queueId, IDatabase database, ILogger<RedisStreamReceiver> logger)
+        private TimeProvider _timeProvider;
+
+        public RedisStreamReceiver(QueueId queueId, IDatabase database, ILogger<RedisStreamReceiver> logger, TimeProvider? timeProvider = null)
         {
             _queueId = queueId;
             _database = database ?? throw new ArgumentNullException(nameof(database));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _timeProvider = timeProvider ?? TimeProvider.System; // Use provided TimeProvider or default
+            _lastTrimTime = _timeProvider.GetUtcNow(); 
+        }
+
+        public void SetTimeProvider(TimeProvider timeProvider)
+        {
+            _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
+            _lastTrimTime = _timeProvider.GetUtcNow();
         }
 
         public async Task<IList<IBatchContainer>?> GetQueueMessagesAsync(int maxCount)
@@ -48,14 +58,14 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
 
         }
 
-        protected virtual async Task TrimStreamIfNeeded()
+        public virtual async Task TrimStreamIfNeeded()
         {
-            if (DateTimeOffset.UtcNow - _lastTrimTime > TimeSpan.FromMinutes(TrimTimeMinutes))
+            if (_timeProvider.GetUtcNow() - _lastTrimTime > TimeSpan.FromMinutes(TrimTimeMinutes))
             {
                 try
                 {
                     var trim = await _database.StreamTrimAsync(_queueId.ToString(), MaxStreamLength, useApproximateMaxLength: true);
-                    _lastTrimTime = DateTimeOffset.UtcNow;
+                    _lastTrimTime = _timeProvider.GetUtcNow();
                 }
                 catch (Exception ex)
                 {

@@ -1,7 +1,7 @@
 ﻿using Microsoft.Extensions.Logging;
 using Orleans.Streams;
 using StackExchange.Redis;
-
+using System; // Added for TimeProvider
 
 namespace Universley.OrleansContrib.StreamsProvider.Redis
 {
@@ -12,12 +12,25 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         private readonly ILogger<RedisStreamReceiver> _logger;
         private string _lastId = "0";
         private Task? pendingTasks;
+        private DateTimeOffset _lastTrimTime;
+        public const int MaxStreamLength = 1000;
+        public const int TrimTimeMinutes = 5;
 
-        public RedisStreamReceiver(QueueId queueId, IDatabase database, ILogger<RedisStreamReceiver> logger)
+        private TimeProvider _timeProvider;
+
+        public RedisStreamReceiver(QueueId queueId, IDatabase database, ILogger<RedisStreamReceiver> logger, TimeProvider? timeProvider = null)
         {
             _queueId = queueId;
             _database = database ?? throw new ArgumentNullException(nameof(database));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _timeProvider = timeProvider ?? TimeProvider.System; // Use provided TimeProvider or default
+            _lastTrimTime = _timeProvider.GetUtcNow(); 
+        }
+
+        public void SetTimeProvider(TimeProvider timeProvider)
+        {
+            _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
+            _lastTrimTime = _timeProvider.GetUtcNow();
         }
 
         public async Task<IList<IBatchContainer>?> GetQueueMessagesAsync(int maxCount)
@@ -28,6 +41,8 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
                 pendingTasks = events;
                 _lastId = ">";
                 var batches = (await events).Select(e => new RedisStreamBatchContainer(e)).ToList<IBatchContainer>();
+                await TrimStreamIfNeeded();
+
                 return batches;
             }
             catch (Exception ex)
@@ -41,6 +56,22 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             }
 
 
+        }
+
+        public virtual async Task TrimStreamIfNeeded()
+        {
+            if (_timeProvider.GetUtcNow() - _lastTrimTime > TimeSpan.FromMinutes(TrimTimeMinutes))
+            {
+                try
+                {
+                    var trim = await _database.StreamTrimAsync(_queueId.ToString(), MaxStreamLength, useApproximateMaxLength: true);
+                    _lastTrimTime = _timeProvider.GetUtcNow();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error trimming stream {QueueId}", _queueId);
+                }
+            }
         }
 
         public async Task Initialize(TimeSpan timeout)

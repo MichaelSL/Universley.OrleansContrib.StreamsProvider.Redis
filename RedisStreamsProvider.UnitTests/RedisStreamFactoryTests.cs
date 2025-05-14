@@ -5,6 +5,7 @@ using Orleans.Providers.Streams.Common;
 using Orleans.Streams;
 using StackExchange.Redis;
 using Universley.OrleansContrib.StreamsProvider.Redis;
+using Microsoft.Extensions.Options;
 
 namespace RedisStreamsProvider.UnitTests
 {
@@ -17,6 +18,7 @@ namespace RedisStreamsProvider.UnitTests
         private readonly SimpleQueueCacheOptions _simpleQueueCacheOptions;
         private readonly HashRingStreamQueueMapperOptions _hashRingStreamQueueMapperOptions;
         private readonly string _providerName = "TestProvider";
+        private readonly Mock<IOptions<RedisStreamReceiverOptions>> _mockReceiverOptions;
 
         public RedisStreamFactoryTests()
         {
@@ -28,23 +30,26 @@ namespace RedisStreamsProvider.UnitTests
             _mockStreamFailureHandler = new Mock<IStreamFailureHandler>();
             _simpleQueueCacheOptions = new SimpleQueueCacheOptions();
             _hashRingStreamQueueMapperOptions = new HashRingStreamQueueMapperOptions();
+            _mockReceiverOptions = new Mock<IOptions<RedisStreamReceiverOptions>>();
+            _mockReceiverOptions.Setup(o => o.Value).Returns(new RedisStreamReceiverOptions());
         }
 
         [Fact]
         public void Constructor_ShouldThrowArgumentNullException_WhenAnyArgumentIsNull()
         {
-            Assert.Throws<ArgumentNullException>(() => new RedisStreamFactory(null, _mockLoggerFactory.Object, _providerName, _mockStreamFailureHandler.Object, _simpleQueueCacheOptions, _hashRingStreamQueueMapperOptions));
-            Assert.Throws<ArgumentNullException>(() => new RedisStreamFactory(_mockConnectionMultiplexer.Object, null, _providerName, _mockStreamFailureHandler.Object, _simpleQueueCacheOptions, _hashRingStreamQueueMapperOptions));
-            Assert.Throws<ArgumentNullException>(() => new RedisStreamFactory(_mockConnectionMultiplexer.Object, _mockLoggerFactory.Object, null, _mockStreamFailureHandler.Object, _simpleQueueCacheOptions, _hashRingStreamQueueMapperOptions));
-            Assert.Throws<ArgumentNullException>(() => new RedisStreamFactory(_mockConnectionMultiplexer.Object, _mockLoggerFactory.Object, _providerName, null, _simpleQueueCacheOptions, _hashRingStreamQueueMapperOptions));
-            Assert.Throws<ArgumentNullException>(() => new RedisStreamFactory(_mockConnectionMultiplexer.Object, _mockLoggerFactory.Object, _providerName, _mockStreamFailureHandler.Object, null, _hashRingStreamQueueMapperOptions));
-            Assert.Throws<ArgumentNullException>(() => new RedisStreamFactory(_mockConnectionMultiplexer.Object, _mockLoggerFactory.Object, _providerName, _mockStreamFailureHandler.Object, _simpleQueueCacheOptions, null));
+            Assert.Throws<ArgumentNullException>(() => new RedisStreamFactory(null!, _mockLoggerFactory.Object, _providerName, _mockStreamFailureHandler.Object, _simpleQueueCacheOptions, _hashRingStreamQueueMapperOptions, _mockReceiverOptions.Object));
+            Assert.Throws<ArgumentNullException>(() => new RedisStreamFactory(_mockConnectionMultiplexer.Object, null!, _providerName, _mockStreamFailureHandler.Object, _simpleQueueCacheOptions, _hashRingStreamQueueMapperOptions, _mockReceiverOptions.Object));
+            Assert.Throws<ArgumentNullException>(() => new RedisStreamFactory(_mockConnectionMultiplexer.Object, _mockLoggerFactory.Object, null!, _mockStreamFailureHandler.Object, _simpleQueueCacheOptions, _hashRingStreamQueueMapperOptions, _mockReceiverOptions.Object));
+            Assert.Throws<ArgumentNullException>(() => new RedisStreamFactory(_mockConnectionMultiplexer.Object, _mockLoggerFactory.Object, _providerName, null!, _simpleQueueCacheOptions, _hashRingStreamQueueMapperOptions, _mockReceiverOptions.Object));
+            Assert.Throws<ArgumentNullException>(() => new RedisStreamFactory(_mockConnectionMultiplexer.Object, _mockLoggerFactory.Object, _providerName, _mockStreamFailureHandler.Object, null!, _hashRingStreamQueueMapperOptions, _mockReceiverOptions.Object));
+            Assert.Throws<ArgumentNullException>(() => new RedisStreamFactory(_mockConnectionMultiplexer.Object, _mockLoggerFactory.Object, _providerName, _mockStreamFailureHandler.Object, _simpleQueueCacheOptions, null!, _mockReceiverOptions.Object));
+            Assert.Throws<ArgumentNullException>(() => new RedisStreamFactory(_mockConnectionMultiplexer.Object, _mockLoggerFactory.Object, _providerName, _mockStreamFailureHandler.Object, _simpleQueueCacheOptions, _hashRingStreamQueueMapperOptions, null!));
         }
 
         [Fact]
         public async Task CreateAdapter_ShouldReturnRedisStreamAdapterInstance()
         {
-            var factory = new RedisStreamFactory(_mockConnectionMultiplexer.Object, _mockLoggerFactory.Object, _providerName, _mockStreamFailureHandler.Object, _simpleQueueCacheOptions, _hashRingStreamQueueMapperOptions);
+            var factory = new RedisStreamFactory(_mockConnectionMultiplexer.Object, _mockLoggerFactory.Object, _providerName, _mockStreamFailureHandler.Object, _simpleQueueCacheOptions, _hashRingStreamQueueMapperOptions, _mockReceiverOptions.Object);
 
             var adapter = await factory.CreateAdapter();
 
@@ -55,7 +60,7 @@ namespace RedisStreamsProvider.UnitTests
         [Fact]
         public async Task GetDeliveryFailureHandler_ShouldReturnStreamFailureHandler()
         {
-            var factory = new RedisStreamFactory(_mockConnectionMultiplexer.Object, _mockLoggerFactory.Object, _providerName, _mockStreamFailureHandler.Object, _simpleQueueCacheOptions, _hashRingStreamQueueMapperOptions);
+            var factory = new RedisStreamFactory(_mockConnectionMultiplexer.Object, _mockLoggerFactory.Object, _providerName, _mockStreamFailureHandler.Object, _simpleQueueCacheOptions, _hashRingStreamQueueMapperOptions, _mockReceiverOptions.Object);
 
             var handler = await factory.GetDeliveryFailureHandler(new QueueId());
 
@@ -66,7 +71,7 @@ namespace RedisStreamsProvider.UnitTests
         [Fact]
         public void GetQueueAdapterCache_ShouldReturnSimpleQueueAdapterCacheInstance()
         {
-            var factory = new RedisStreamFactory(_mockConnectionMultiplexer.Object, _mockLoggerFactory.Object, _providerName, _mockStreamFailureHandler.Object, _simpleQueueCacheOptions, _hashRingStreamQueueMapperOptions);
+            var factory = new RedisStreamFactory(_mockConnectionMultiplexer.Object, _mockLoggerFactory.Object, _providerName, _mockStreamFailureHandler.Object, _simpleQueueCacheOptions, _hashRingStreamQueueMapperOptions, _mockReceiverOptions.Object);
 
             var cache = factory.GetQueueAdapterCache();
 
@@ -77,7 +82,7 @@ namespace RedisStreamsProvider.UnitTests
         [Fact]
         public void GetStreamQueueMapper_ShouldReturnHashRingBasedStreamQueueMapperInstance()
         {
-            var factory = new RedisStreamFactory(_mockConnectionMultiplexer.Object, _mockLoggerFactory.Object, _providerName, _mockStreamFailureHandler.Object, _simpleQueueCacheOptions, _hashRingStreamQueueMapperOptions);
+            var factory = new RedisStreamFactory(_mockConnectionMultiplexer.Object, _mockLoggerFactory.Object, _providerName, _mockStreamFailureHandler.Object, _simpleQueueCacheOptions, _hashRingStreamQueueMapperOptions, _mockReceiverOptions.Object);
 
             var mapper = factory.GetStreamQueueMapper();
 
@@ -88,8 +93,12 @@ namespace RedisStreamsProvider.UnitTests
         [Fact]
         public void Create_ShouldThrowException_WhenServiceProviderIsNull()
         {
+            // Arrange
+            // No need to mock GetService for IOptions<RedisStreamReceiverOptions> here, 
+            // as the ArgumentNullException for services should be thrown first.
+            
             // Act & Assert
-            Assert.Throws<ArgumentNullException>(() => RedisStreamFactory.Create(null, _providerName));
+            Assert.Throws<ArgumentNullException>(() => RedisStreamFactory.Create(null!, _providerName));
         }
     }
 }

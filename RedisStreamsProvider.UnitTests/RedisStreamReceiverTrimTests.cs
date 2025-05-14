@@ -3,9 +3,9 @@ using Moq;
 using Orleans.Streams;
 using StackExchange.Redis;
 using Universley.OrleansContrib.StreamsProvider.Redis;
-using System.Reflection;
-using Microsoft.Extensions.Time.Testing; // Added for FakeTimeProvider
-using System; // Added for DateTimeOffset
+using Microsoft.Extensions.Time.Testing;
+using System;
+using Microsoft.Extensions.Options; // Added for IOptions
 
 namespace RedisStreamsProvider.UnitTests
 {
@@ -15,8 +15,9 @@ namespace RedisStreamsProvider.UnitTests
         private readonly Mock<ILogger<RedisStreamReceiver>> _mockLogger;
         private readonly QueueId _queueId;
         private RedisStreamReceiver _receiver;
-        private FakeTimeProvider _fakeTimeProvider; // Added FakeTimeProvider
+        private FakeTimeProvider _fakeTimeProvider;
         private DateTimeOffset _initialTime;
+        private RedisStreamReceiverOptions _receiverOptions; // Added to hold options for tests
 
         public RedisStreamReceiverTrimTests()
         {
@@ -24,17 +25,18 @@ namespace RedisStreamsProvider.UnitTests
             _mockLogger = new Mock<ILogger<RedisStreamReceiver>>();
             _queueId = new QueueId();
             _initialTime = new DateTimeOffset(2025, 5, 13, 12, 0, 0, TimeSpan.Zero);
-            _fakeTimeProvider = new FakeTimeProvider(_initialTime); // Initialize FakeTimeProvider
-            _receiver = new RedisStreamReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object, _fakeTimeProvider);
+            _fakeTimeProvider = new FakeTimeProvider(_initialTime);
+            // Initialize options for tests - these values should match what the tests expect
+            _receiverOptions = new RedisStreamReceiverOptions { TrimTimeMinutes = 1, MaxStreamLength = 128 };
+            IOptions<RedisStreamReceiverOptions> options = Options.Create(_receiverOptions);
+            _receiver = new RedisStreamReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object, _fakeTimeProvider, options);
         }
 
         [Fact]
         public async Task TrimStreamIfNeeded_ShouldNotTrim_WhenTimeIntervalNotExceeded()
         {
             // Arrange
-            // _lastTrimTime is _initialTime due to constructor setup.
-            // Advance current time by less than TrimTimeMinutes.
-            _fakeTimeProvider.Advance(TimeSpan.FromMinutes(RedisStreamReceiver.TrimTimeMinutes - 1));
+            _fakeTimeProvider.Advance(TimeSpan.FromMinutes(_receiverOptions.TrimTimeMinutes - 1));
 
             // Act
             await _receiver.TrimStreamIfNeeded();
@@ -49,11 +51,9 @@ namespace RedisStreamsProvider.UnitTests
         public async Task TrimStreamIfNeeded_ShouldTrim_WhenTimeIntervalExceeded()
         {
             // Arrange
-            // _lastTrimTime is _initialTime.
-            // Advance current time by more than TrimTimeMinutes to trigger trim.
-            _fakeTimeProvider.Advance(TimeSpan.FromMinutes(RedisStreamReceiver.TrimTimeMinutes + 1));
+            _fakeTimeProvider.Advance(TimeSpan.FromMinutes(_receiverOptions.TrimTimeMinutes + 1));
             _mockDatabase
-                .Setup(db => db.StreamTrimAsync(_queueId.ToString(), RedisStreamReceiver.MaxStreamLength, true, It.IsAny<CommandFlags>()))
+                .Setup(db => db.StreamTrimAsync(_queueId.ToString(), _receiverOptions.MaxStreamLength, true, It.IsAny<CommandFlags>()))
                 .Returns(Task.FromResult<long>(10));
 
             // Act
@@ -61,7 +61,7 @@ namespace RedisStreamsProvider.UnitTests
 
             // Assert
             _mockDatabase.Verify(
-                db => db.StreamTrimAsync(_queueId.ToString(), RedisStreamReceiver.MaxStreamLength, true, It.IsAny<CommandFlags>()),
+                db => db.StreamTrimAsync(_queueId.ToString(), _receiverOptions.MaxStreamLength, true, It.IsAny<CommandFlags>()),
                 Moq.Times.Once());
         }
 
@@ -69,11 +69,11 @@ namespace RedisStreamsProvider.UnitTests
         public async Task TrimStreamIfNeeded_ShouldUpdateLastTrimTime_WhenTrimSucceeds()
         {
             // Arrange
-            var timeToTriggerTrim = TimeSpan.FromMinutes(RedisStreamReceiver.TrimTimeMinutes + 1);
+            var timeToTriggerTrim = TimeSpan.FromMinutes(_receiverOptions.TrimTimeMinutes + 1);
             _fakeTimeProvider.Advance(timeToTriggerTrim);
 
             _mockDatabase
-                .Setup(db => db.StreamTrimAsync(_queueId.ToString(), RedisStreamReceiver.MaxStreamLength, true, It.IsAny<CommandFlags>()))
+                .Setup(db => db.StreamTrimAsync(_queueId.ToString(), _receiverOptions.MaxStreamLength, true, It.IsAny<CommandFlags>()))
                 .Returns(Task.FromResult<long>(10));
 
             // Act
@@ -87,7 +87,7 @@ namespace RedisStreamsProvider.UnitTests
             await _receiver.TrimStreamIfNeeded();
 
             _mockDatabase.Verify(
-                db => db.StreamTrimAsync(_queueId.ToString(), RedisStreamReceiver.MaxStreamLength, true, It.IsAny<CommandFlags>()),
+                db => db.StreamTrimAsync(_queueId.ToString(), _receiverOptions.MaxStreamLength, true, It.IsAny<CommandFlags>()),
                 Moq.Times.Never());
         }
 
@@ -96,9 +96,9 @@ namespace RedisStreamsProvider.UnitTests
         {
             // Arrange
             var exception = new RedisException("Test exception");
-            _fakeTimeProvider.Advance(TimeSpan.FromMinutes(RedisStreamReceiver.TrimTimeMinutes + 1));
+            _fakeTimeProvider.Advance(TimeSpan.FromMinutes(_receiverOptions.TrimTimeMinutes + 1));
             _mockDatabase
-                .Setup(db => db.StreamTrimAsync(_queueId.ToString(), RedisStreamReceiver.MaxStreamLength, true, It.IsAny<CommandFlags>()))
+                .Setup(db => db.StreamTrimAsync(_queueId.ToString(), _receiverOptions.MaxStreamLength, true, It.IsAny<CommandFlags>()))
                 .Returns(Task.FromException<long>(exception));
 
             // Act
@@ -120,15 +120,17 @@ namespace RedisStreamsProvider.UnitTests
         {
             // Arrange
             var fakeTimeProviderForTestReceiver = new FakeTimeProvider(_initialTime);
-            var testReceiver = new TestReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object, fakeTimeProviderForTestReceiver);
-            fakeTimeProviderForTestReceiver.Advance(TimeSpan.FromMinutes(RedisStreamReceiver.TrimTimeMinutes + 1));
+            // Use the same options for the TestReceiver instance
+            IOptions<RedisStreamReceiverOptions> testReceiverOptions = Options.Create(_receiverOptions);
+            var testReceiver = new TestReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object, fakeTimeProviderForTestReceiver, testReceiverOptions);
+            fakeTimeProviderForTestReceiver.Advance(TimeSpan.FromMinutes(_receiverOptions.TrimTimeMinutes + 1));
 
             var streamEntries = Array.Empty<StreamEntry>();
             _mockDatabase
                 .Setup(db => db.StreamReadGroupAsync(_queueId.ToString(), It.IsAny<RedisValue>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue>(), It.IsAny<int>(), false, It.IsAny<CommandFlags>()))
                 .Returns(Task.FromResult(streamEntries));
             _mockDatabase
-                .Setup(db => db.StreamTrimAsync(_queueId.ToString(), RedisStreamReceiver.MaxStreamLength, true, It.IsAny<CommandFlags>()))
+                .Setup(db => db.StreamTrimAsync(_queueId.ToString(), _receiverOptions.MaxStreamLength, true, It.IsAny<CommandFlags>()))
                 .Returns(Task.FromResult<long>(0));
 
             // Act
@@ -142,8 +144,9 @@ namespace RedisStreamsProvider.UnitTests
         {
             public bool WasTrimCalled { get; private set; }
 
-            public TestReceiver(QueueId queueId, IDatabase database, ILogger<RedisStreamReceiver> logger, TimeProvider timeProvider)
-                : base(queueId, database, logger, timeProvider) // Pass TimeProvider to base
+            // Updated constructor to accept IOptions<RedisStreamReceiverOptions>
+            public TestReceiver(QueueId queueId, IDatabase database, ILogger<RedisStreamReceiver> logger, TimeProvider timeProvider, IOptions<RedisStreamReceiverOptions> receiverOptions)
+                : base(queueId, database, logger, timeProvider, receiverOptions)
             {
                 WasTrimCalled = false;
             }

@@ -4,6 +4,7 @@ using Orleans.Configuration;
 using Orleans.Providers.Streams.Common;
 using Orleans.Streams;
 using StackExchange.Redis;
+using Microsoft.Extensions.Options;
 
 namespace Universley.OrleansContrib.StreamsProvider.Redis
 {
@@ -15,14 +16,15 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         private readonly IStreamFailureHandler _streamFailureHandler;
         private readonly SimpleQueueCacheOptions _simpleQueueCacheOptions;
         private readonly HashRingBasedStreamQueueMapper _hashRingBasedStreamQueueMapper;
+        private readonly IOptions<RedisStreamReceiverOptions> _receiverOptions;
 
         public RedisStreamFactory(IConnectionMultiplexer connectionMultiplexer,
             ILoggerFactory loggerFactory,
             string providerName,
             IStreamFailureHandler streamFailureHandler,
             SimpleQueueCacheOptions simpleQueueCacheOptions,
-            HashRingStreamQueueMapperOptions hashRingStreamQueueMapperOptions
-            )
+            HashRingStreamQueueMapperOptions hashRingStreamQueueMapperOptions,
+            IOptions<RedisStreamReceiverOptions> receiverOptions)
         {
             if (hashRingStreamQueueMapperOptions is null)
             {
@@ -35,6 +37,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             _streamFailureHandler = streamFailureHandler ?? throw new ArgumentNullException(nameof(streamFailureHandler));
             _simpleQueueCacheOptions = simpleQueueCacheOptions ?? throw new ArgumentNullException(nameof(simpleQueueCacheOptions));
             _hashRingBasedStreamQueueMapper = new HashRingBasedStreamQueueMapper(hashRingStreamQueueMapperOptions, providerName);
+            _receiverOptions = receiverOptions ?? throw new ArgumentNullException(nameof(receiverOptions));
         }
 
         public static IQueueAdapterFactory Create(IServiceProvider provider, string providerName)
@@ -43,14 +46,18 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             var loggerFactory = provider.GetRequiredService<ILoggerFactory>();
             var simpleQueueCacheOptions = provider.GetOptionsByName<SimpleQueueCacheOptions>(providerName);
             var hashRingStreamQueueMapperOptions = provider.GetOptionsByName<HashRingStreamQueueMapperOptions>(providerName);
+            var receiverOptionsInstance = provider.GetOptionsByName<RedisStreamReceiverOptions>(providerName); // Renamed for clarity, this is TOptions, not IOptions<TOptions>
+            // Options.Create needs the actual options instance. GetOptionsByName returns a non-null instance.
+            IOptions<RedisStreamReceiverOptions> ioptionsReceiverOptions = Options.Create(receiverOptionsInstance);
             var streamFailureHandler = new RedisStreamFailureHandler(loggerFactory.CreateLogger<RedisStreamFailureHandler>());
-            return new RedisStreamFactory(connMuliplexer, loggerFactory, providerName, streamFailureHandler, simpleQueueCacheOptions, hashRingStreamQueueMapperOptions);
+            return new RedisStreamFactory(connMuliplexer, loggerFactory, providerName, streamFailureHandler, simpleQueueCacheOptions, hashRingStreamQueueMapperOptions, ioptionsReceiverOptions);
 
         }
 
         public Task<IQueueAdapter> CreateAdapter()
         {
-            return Task.FromResult<IQueueAdapter>(new RedisStreamAdapter(_connectionMultiplexer.GetDatabase(), _providerName, _hashRingBasedStreamQueueMapper, _loggerFactory));
+            // Pass receiver options to RedisStreamAdapter
+            return Task.FromResult<IQueueAdapter>(new RedisStreamAdapter(_connectionMultiplexer.GetDatabase(), _providerName, _hashRingBasedStreamQueueMapper, _loggerFactory, _receiverOptions));
         }
 
         public Task<IStreamFailureHandler> GetDeliveryFailureHandler(QueueId queueId)

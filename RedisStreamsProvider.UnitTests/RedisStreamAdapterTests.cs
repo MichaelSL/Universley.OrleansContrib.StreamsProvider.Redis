@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Orleans.Streams;
 using Orleans.Configuration;
 using Universley.OrleansContrib.StreamsProvider.Redis;
+using Microsoft.Extensions.Options;
 
 namespace RedisStreamsProvider.UnitTests
 {
@@ -13,6 +14,7 @@ namespace RedisStreamsProvider.UnitTests
         private readonly Mock<HashRingBasedStreamQueueMapper> _mockQueueMapper;
         private readonly Mock<ILoggerFactory> _mockLoggerFactory;
         private readonly Mock<ILogger<RedisStreamAdapter>> _mockLogger;
+        private readonly Mock<IOptions<RedisStreamReceiverOptions>> _mockReceiverOptions;
         private readonly RedisStreamAdapter _adapter;
 
         public RedisStreamAdapterTests()
@@ -23,7 +25,9 @@ namespace RedisStreamsProvider.UnitTests
             _mockLoggerFactory = new Mock<ILoggerFactory>();
             _mockLogger = new Mock<ILogger<RedisStreamAdapter>>();
             _mockLoggerFactory.Setup(factory => factory.CreateLogger(It.IsAny<string>())).Returns(_mockLogger.Object);
-            _adapter = new RedisStreamAdapter(_mockDatabase.Object, "TestProvider", _mockQueueMapper.Object, _mockLoggerFactory.Object);
+            _mockReceiverOptions = new Mock<IOptions<RedisStreamReceiverOptions>>();
+            _mockReceiverOptions.Setup(o => o.Value).Returns(new RedisStreamReceiverOptions()); // Provide default options
+            _adapter = new RedisStreamAdapter(_mockDatabase.Object, "TestProvider", _mockQueueMapper.Object, _mockLoggerFactory.Object, _mockReceiverOptions.Object);
         }
 
         [Fact]
@@ -55,8 +59,10 @@ namespace RedisStreamsProvider.UnitTests
             var mockDatabase = new Mock<IDatabase>();
             var mockLoggerFactory = new Mock<ILoggerFactory>();
             var mockLogger = new Mock<ILogger<RedisStreamAdapter>>();
+            var mockReceiverOptions = new Mock<IOptions<RedisStreamReceiverOptions>>();
+            mockReceiverOptions.Setup(o => o.Value).Returns(new RedisStreamReceiverOptions()); // Provide default options
             mockLoggerFactory.Setup(factory => factory.CreateLogger(It.IsAny<string>())).Returns(mockLogger.Object);
-            var adapter = new RedisStreamAdapter(mockDatabase.Object, "TestProvider", _mockQueueMapper.Object, mockLoggerFactory.Object);
+            var adapter = new RedisStreamAdapter(mockDatabase.Object, "TestProvider", _mockQueueMapper.Object, mockLoggerFactory.Object, mockReceiverOptions.Object);
             mockDatabase.Setup(db => db.StreamAddAsync(It.IsAny<RedisKey>(), It.IsAny<NameValueEntry[]>(), It.IsAny<RedisValue?>(), It.IsAny<int?>(), It.IsAny<bool>(), CommandFlags.None))
                 .ThrowsAsync(new Exception("Test exception"));
 
@@ -68,9 +74,9 @@ namespace RedisStreamsProvider.UnitTests
                 logger => logger.Log(
                     It.Is<LogLevel>(logLevel => logLevel == LogLevel.Error),
                     It.IsAny<EventId>(),
-                    It.Is<It.IsAnyType>((v, t) => v.ToString().Contains("Error adding event to stream")),
+                    It.Is<It.IsAnyType>((v, t) => v != null && v.ToString()!.Contains("Error adding event to stream")),
                     It.IsAny<Exception>(),
-                    It.Is<Func<It.IsAnyType, Exception, string>>((v, t) => true)),
+                    It.Is<Func<It.IsAnyType, Exception?, string>>((v, t) => true)),
                 Times.Once);
         }
     }

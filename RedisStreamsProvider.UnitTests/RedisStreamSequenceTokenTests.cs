@@ -113,7 +113,7 @@ namespace RedisStreamsProvider.UnitTests
             var token = new RedisStreamSequenceToken(123, 456);
 
             // Act & Assert
-            Assert.Throws<ArgumentNullException>(() => token.CompareTo(null));
+            Assert.Throws<ArgumentNullException>(() => token.CompareTo(null!));
         }
 
         [Fact]

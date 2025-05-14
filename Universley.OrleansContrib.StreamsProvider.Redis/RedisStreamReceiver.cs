@@ -13,8 +13,8 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         private string _lastId = "0";
         private Task? pendingTasks;
         private DateTimeOffset _lastTrimTime;
-        public const int MaxStreamLength = 1000;
-        public const int TrimTimeMinutes = 5;
+        public const int MaxStreamLength = 128;
+        public const int TrimTimeMinutes = 1;
 
         private TimeProvider _timeProvider;
 
@@ -66,6 +66,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
                 {
                     var trim = await _database.StreamTrimAsync(_queueId.ToString(), MaxStreamLength, useApproximateMaxLength: true);
                     _lastTrimTime = _timeProvider.GetUtcNow();
+                    _logger.LogDebug("Trimmed stream {QueueId} to {MaxStreamLength} entries at {Time}", _queueId, MaxStreamLength, _lastTrimTime);
                 }
                 catch (Exception ex)
                 {

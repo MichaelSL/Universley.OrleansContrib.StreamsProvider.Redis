@@ -27,6 +27,12 @@ builder.ConfigureServices(services =>
             options.TotalQueueCount = 8;
         });
     services.AddOptions<SimpleQueueCacheOptions>("RedisStream");
+    services.AddOptions<RedisStreamReceiverOptions>("RedisStream")
+        .Configure(options =>
+        {
+            options.MaxStreamLength = 1000;  // max messages kept in Redis stream before trimming
+            options.TrimTimeMinutes = 5;     // how often the stream is trimmed
+        });
 });
 using IHost host = builder.Build();
 await host.RunAsync();

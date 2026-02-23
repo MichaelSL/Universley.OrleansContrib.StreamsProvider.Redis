@@ -12,9 +12,9 @@ namespace RedisStreamsProvider.UnitTests
             // Arrange
             var streamEntry = new StreamEntry("1-0", new NameValueEntry[]
             {
-                        new NameValueEntry("namespace", "testNamespace"),
-                        new NameValueEntry("key", "testKey"),
-                        new NameValueEntry("type", "TestEvent"),
+                        new NameValueEntry("streamNamespace", "testNamespace"),
+                        new NameValueEntry("streamKey", "testKey"),
+                        new NameValueEntry("eventType", "TestEvent"),
                         new NameValueEntry("data", JsonSerializer.Serialize(new TestEvent { Id = 1, Name = "Test" }))
             });
 
@@ -33,9 +33,9 @@ namespace RedisStreamsProvider.UnitTests
             // Arrange
             var streamEntry = new StreamEntry("1-0", new NameValueEntry[]
             {
-                        new NameValueEntry("namespace", "testNamespace"),
-                        new NameValueEntry("key", "testKey"),
-                        new NameValueEntry("type", "TestEvent"),
+                        new NameValueEntry("streamNamespace", "testNamespace"),
+                        new NameValueEntry("streamKey", "testKey"),
+                        new NameValueEntry("eventType", "TestEvent"),
                         new NameValueEntry("data", JsonSerializer.Serialize(new TestEvent { Id = 1, Name = "Test" }))
             });
             var container = new RedisStreamBatchContainer(streamEntry);
@@ -56,9 +56,9 @@ namespace RedisStreamsProvider.UnitTests
             // Arrange
             var streamEntry = new StreamEntry("1-0", new NameValueEntry[]
             {
-                        new NameValueEntry("namespace", "testNamespace"),
-                        new NameValueEntry("key", "testKey"),
-                        new NameValueEntry("type", "TestEvent"),
+                        new NameValueEntry("streamNamespace", "testNamespace"),
+                        new NameValueEntry("streamKey", "testKey"),
+                        new NameValueEntry("eventType", "TestEvent"),
                         new NameValueEntry("data", JsonSerializer.Serialize(new TestEvent { Id = 1, Name = "Test" }))
             });
             var container = new RedisStreamBatchContainer(streamEntry);
@@ -76,9 +76,9 @@ namespace RedisStreamsProvider.UnitTests
             // Arrange
             var invalidStreamEntry = new StreamEntry("1-0", new NameValueEntry[]
             {
-                new NameValueEntry("namespace", ""),
-                new NameValueEntry("key", ""),
-                new NameValueEntry("type", ""),
+                new NameValueEntry("streamNamespace", ""),
+                new NameValueEntry("streamKey", ""),
+                new NameValueEntry("eventType", ""),
                 new NameValueEntry("data", "")
             });
 

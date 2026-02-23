@@ -49,7 +49,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
                 throw new ArgumentNullException(nameof(data));
             }
             
-            StreamId = StreamId.Create(streamNamespace!, steamKey!);
+            StreamId = StreamId.Create((string)streamNamespace!, (string)steamKey!);
             SequenceToken = new RedisStreamSequenceToken(streamEntry.Id);
             EventType = eventType!;
             Data = data!;

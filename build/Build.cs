@@ -191,9 +191,10 @@ class Build : NukeBuild
         // Fall back to git for local builds
         try
         {
-            var branch = GitTasks.Git("rev-parse --abbrev-ref HEAD", logOutput: false).FirstOrDefault()?.Text?.Trim();
-            Log.Information("Current git branch: {branch}", branch);
-            return branch == "main";
+            var branch = GitTasks.Git("rev-parse --abbrev-ref HEAD", logOutput: false).FirstOrDefault();
+            var branchText = branch.Text?.Trim();
+            Log.Information("Current git branch: {branch}", branchText);
+            return branchText == "main";
         }
         catch
         {

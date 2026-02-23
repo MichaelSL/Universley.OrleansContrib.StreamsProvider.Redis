@@ -88,11 +88,8 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         {
             try
             {
-                using (var cts = new CancellationTokenSource(timeout))
-                {
-                    var task = _database.StreamCreateConsumerGroupAsync(_queueId.ToString(), "consumer", "$", true);
-                    await task.WaitAsync(timeout, cts.Token);
-                }
+                var task = _database.StreamCreateConsumerGroupAsync(_queueId.ToString(), "consumer", "$", true);
+                await task.WaitAsync(timeout);
             }
             catch (Exception ex) when (ex.Message.Contains("name already exists")) { }
             catch (Exception ex)

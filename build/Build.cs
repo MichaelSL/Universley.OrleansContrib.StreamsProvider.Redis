@@ -159,7 +159,47 @@ class Build : NukeBuild
         var currentDateTime = DateTimeOffset.UtcNow;
 
         var assembledVersion = $"{currentDateTime.Year}.{currentDateTime.Month}.{buildNumber}";
+
+        if (!IsMainBranch())
+        {
+            assembledVersion += "-alpha";
+        }
+
         Log.Information("Assembled version: {assembledVersion}", assembledVersion);
         return assembledVersion;
+    }
+
+    private bool IsMainBranch()
+    {
+        // In GitHub Actions, GITHUB_HEAD_REF is only set for pull requests (contains the source branch name)
+        var headRef = Environment.GetEnvironmentVariable("GITHUB_HEAD_REF");
+        if (!string.IsNullOrEmpty(headRef))
+        {
+            Log.Information("Running in PR context (GITHUB_HEAD_REF={headRef}), treating as non-main", headRef);
+            return false;
+        }
+
+        // For push events in GitHub Actions, GITHUB_REF contains the full ref (e.g. refs/heads/main)
+        var githubRef = Environment.GetEnvironmentVariable("GITHUB_REF");
+        if (!string.IsNullOrEmpty(githubRef))
+        {
+            var isMain = githubRef == "refs/heads/main";
+            Log.Information("GITHUB_REF={githubRef}, isMain={isMain}", githubRef, isMain);
+            return isMain;
+        }
+
+        // Fall back to git for local builds
+        try
+        {
+            var branch = GitTasks.Git("rev-parse --abbrev-ref HEAD", logOutput: false).FirstOrDefault();
+            var branchText = branch.Text?.Trim();
+            Log.Information("Current git branch: {branch}", branchText);
+            return branchText == "main";
+        }
+        catch
+        {
+            Log.Warning("Could not determine current branch, defaulting to main branch behaviour");
+            return true;
+        }
     }
 }

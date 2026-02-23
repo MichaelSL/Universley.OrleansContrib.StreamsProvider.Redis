@@ -26,21 +26,21 @@ namespace RedisStreamsProvider.UnitTests
             var streamEntries = new[]
             {
                 new StreamEntry("1-0", [
-                    new("namespace", "testNamespace"),
-                    new("key", "testKey"),
+                    new("streamNamespace", "testNamespace"),
+                    new("streamKey", "testKey"),
                     new("eventType", "testEventType" ),
                     new( "data", "testData" )
                 ]),
                 new StreamEntry("2-0", [
-                    new("namespace", "testNamespace"),
-                    new("key", "testKey"),
+                    new("streamNamespace", "testNamespace"),
+                    new("streamKey", "testKey"),
                     new("eventType", "testEventType" ),
                     new( "data", "testData" )
                 ])
             };
             _mockDatabase.Setup(db => db.StreamReadGroupAsync(
                     It.IsAny<RedisKey>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue?>(),
-                    It.IsAny<int?>(), It.IsAny<bool>(), CommandFlags.None))
+                    It.IsAny<int?>(), It.IsAny<bool>(), It.IsAny<TimeSpan?>(), It.IsAny<CommandFlags>()))
                 .ReturnsAsync(streamEntries);
 
             var receiver = new RedisStreamReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object);
@@ -59,7 +59,7 @@ namespace RedisStreamsProvider.UnitTests
             // Arrange
             _mockDatabase.Setup(db => db.StreamReadGroupAsync(
                     It.IsAny<RedisKey>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue?>(),
-                    It.IsAny<int?>(), It.IsAny<bool>(), CommandFlags.None))
+                    It.IsAny<int?>(), It.IsAny<bool>(), It.IsAny<TimeSpan?>(), It.IsAny<CommandFlags>()))
                 .ThrowsAsync(new Exception("Test exception"));
             var receiver = new RedisStreamReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object);
 
@@ -122,14 +122,14 @@ namespace RedisStreamsProvider.UnitTests
             var messages = new List<IBatchContainer>
             {
                 new RedisStreamBatchContainer(new StreamEntry("1-0", [
-                    new("namespace", "testNamespace"),
-                    new("key", "testKey"),
+                    new("streamNamespace", "testNamespace"),
+                    new("streamKey", "testKey"),
                     new("eventType", "testEventType" ),
                     new( "data", "testData" )
                 ])),
                 new RedisStreamBatchContainer(new StreamEntry("2-0", [
-                    new("namespace", "testNamespace"),
-                    new("key", "testKey"),
+                    new("streamNamespace", "testNamespace"),
+                    new("streamKey", "testKey"),
                     new("eventType", "testEventType" ),
                     new( "data", "testData" )
                 ]))
@@ -157,8 +157,8 @@ namespace RedisStreamsProvider.UnitTests
             var messages = new List<IBatchContainer>
             {
                 new RedisStreamBatchContainer(new StreamEntry("1-0", [
-                    new("namespace", "testNamespace"),
-                    new("key", "testKey"),
+                    new("streamNamespace", "testNamespace"),
+                    new("streamKey", "testKey"),
                     new("eventType", "testEventType" ),
                     new( "data", "testData" )
                 ]))

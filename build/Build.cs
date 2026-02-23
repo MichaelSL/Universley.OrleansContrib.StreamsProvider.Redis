@@ -63,8 +63,8 @@ class Build : NukeBuild
     Target Compile => _ => _
         .Executes(() =>
         {
-            var semVer = Version;
-            var semFileVer = Version;
+            var semVer = AssemblyVersion;
+            var semFileVer = AssemblyVersion;
             var informationalVersion = Version;
 
             Log.Logger.Information("AssemblySemVer: {semVer}", semVer);
@@ -144,6 +144,9 @@ class Build : NukeBuild
             return version;
         }
     }
+
+    // Assembly/file versions must be numeric only (major.minor.build[.revision])
+    private string AssemblyVersion => Version.Split('-')[0];
 
     private string version = null;
 

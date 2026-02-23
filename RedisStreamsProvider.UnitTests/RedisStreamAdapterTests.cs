@@ -63,7 +63,7 @@ namespace RedisStreamsProvider.UnitTests
             mockReceiverOptions.Setup(o => o.Value).Returns(new RedisStreamReceiverOptions()); // Provide default options
             mockLoggerFactory.Setup(factory => factory.CreateLogger(It.IsAny<string>())).Returns(mockLogger.Object);
             var adapter = new RedisStreamAdapter(mockDatabase.Object, "TestProvider", _mockQueueMapper.Object, mockLoggerFactory.Object, mockReceiverOptions.Object);
-            mockDatabase.Setup(db => db.StreamAddAsync(It.IsAny<RedisKey>(), It.IsAny<NameValueEntry[]>(), It.IsAny<RedisValue?>(), It.IsAny<int?>(), It.IsAny<bool>(), CommandFlags.None))
+            mockDatabase.Setup(db => db.StreamAddAsync(It.IsAny<RedisKey>(), It.IsAny<NameValueEntry[]>(), It.IsAny<RedisValue?>(), It.IsAny<long?>(), It.IsAny<bool>(), It.IsAny<long?>(), It.IsAny<StreamTrimMode>(), It.IsAny<CommandFlags>()))
                 .ThrowsAsync(new Exception("Test exception"));
 
             // Act

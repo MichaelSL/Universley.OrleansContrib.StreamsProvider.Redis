@@ -43,7 +43,7 @@ namespace RedisStreamsProvider.UnitTests
 
             // Assert
             _mockDatabase.Verify(
-                db => db.StreamTrimAsync(It.IsAny<RedisKey>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<CommandFlags>()),
+                db => db.StreamTrimAsync(It.IsAny<RedisKey>(), It.IsAny<long>(), It.IsAny<bool>(), It.IsAny<long?>(), It.IsAny<StreamTrimMode>(), It.IsAny<CommandFlags>()),
                 Moq.Times.Never());
         }
 
@@ -53,7 +53,7 @@ namespace RedisStreamsProvider.UnitTests
             // Arrange
             _fakeTimeProvider.Advance(TimeSpan.FromMinutes(_receiverOptions.TrimTimeMinutes + 1));
             _mockDatabase
-                .Setup(db => db.StreamTrimAsync(_queueId.ToString(), _receiverOptions.MaxStreamLength, true, It.IsAny<CommandFlags>()))
+                .Setup(db => db.StreamTrimAsync(_queueId.ToString(), (long)_receiverOptions.MaxStreamLength, true, It.IsAny<long?>(), It.IsAny<StreamTrimMode>(), It.IsAny<CommandFlags>()))
                 .Returns(Task.FromResult<long>(10));
 
             // Act
@@ -61,7 +61,7 @@ namespace RedisStreamsProvider.UnitTests
 
             // Assert
             _mockDatabase.Verify(
-                db => db.StreamTrimAsync(_queueId.ToString(), _receiverOptions.MaxStreamLength, true, It.IsAny<CommandFlags>()),
+                db => db.StreamTrimAsync(_queueId.ToString(), (long)_receiverOptions.MaxStreamLength, true, It.IsAny<long?>(), It.IsAny<StreamTrimMode>(), It.IsAny<CommandFlags>()),
                 Moq.Times.Once());
         }
 
@@ -73,7 +73,7 @@ namespace RedisStreamsProvider.UnitTests
             _fakeTimeProvider.Advance(timeToTriggerTrim);
 
             _mockDatabase
-                .Setup(db => db.StreamTrimAsync(_queueId.ToString(), _receiverOptions.MaxStreamLength, true, It.IsAny<CommandFlags>()))
+                .Setup(db => db.StreamTrimAsync(_queueId.ToString(), (long)_receiverOptions.MaxStreamLength, true, It.IsAny<long?>(), It.IsAny<StreamTrimMode>(), It.IsAny<CommandFlags>()))
                 .Returns(Task.FromResult<long>(10));
 
             // Act
@@ -87,7 +87,7 @@ namespace RedisStreamsProvider.UnitTests
             await _receiver.TrimStreamIfNeeded();
 
             _mockDatabase.Verify(
-                db => db.StreamTrimAsync(_queueId.ToString(), _receiverOptions.MaxStreamLength, true, It.IsAny<CommandFlags>()),
+                db => db.StreamTrimAsync(_queueId.ToString(), (long)_receiverOptions.MaxStreamLength, true, It.IsAny<long?>(), It.IsAny<StreamTrimMode>(), It.IsAny<CommandFlags>()),
                 Moq.Times.Never());
         }
 
@@ -98,7 +98,7 @@ namespace RedisStreamsProvider.UnitTests
             var exception = new RedisException("Test exception");
             _fakeTimeProvider.Advance(TimeSpan.FromMinutes(_receiverOptions.TrimTimeMinutes + 1));
             _mockDatabase
-                .Setup(db => db.StreamTrimAsync(_queueId.ToString(), _receiverOptions.MaxStreamLength, true, It.IsAny<CommandFlags>()))
+                .Setup(db => db.StreamTrimAsync(_queueId.ToString(), (long)_receiverOptions.MaxStreamLength, true, It.IsAny<long?>(), It.IsAny<StreamTrimMode>(), It.IsAny<CommandFlags>()))
                 .Returns(Task.FromException<long>(exception));
 
             // Act
@@ -130,7 +130,7 @@ namespace RedisStreamsProvider.UnitTests
                 .Setup(db => db.StreamReadGroupAsync(_queueId.ToString(), It.IsAny<RedisValue>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue>(), It.IsAny<int>(), false, It.IsAny<CommandFlags>()))
                 .Returns(Task.FromResult(streamEntries));
             _mockDatabase
-                .Setup(db => db.StreamTrimAsync(_queueId.ToString(), _receiverOptions.MaxStreamLength, true, It.IsAny<CommandFlags>()))
+                .Setup(db => db.StreamTrimAsync(_queueId.ToString(), (long)_receiverOptions.MaxStreamLength, true, It.IsAny<long?>(), It.IsAny<StreamTrimMode>(), It.IsAny<CommandFlags>()))
                 .Returns(Task.FromResult<long>(0));
 
             // Act

@@ -25,10 +25,10 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         
         public RedisStreamBatchContainer(StreamEntry streamEntry)
         {
-            var streamNamespace = streamEntry.Values[0].Value;
-            var steamKey = streamEntry.Values[1].Value;
-            var eventType = streamEntry.Values[2].Value;
-            var data = streamEntry.Values[3].Value;
+            var streamNamespace = (string?)streamEntry["streamNamespace"];
+            var steamKey = (string?)streamEntry["streamKey"];
+            var eventType = (string?)streamEntry["eventType"];
+            var data = (string?)streamEntry["data"];
             StreamEntryId = streamEntry.Id.ToString() ?? throw new ArgumentNullException(nameof(streamEntry.Id));
             
             // Check incoming data

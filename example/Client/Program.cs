@@ -40,7 +40,7 @@ var stream = streamProvider.GetStream<int>(streamId);
 var newStreamId = StreamId.Create("numbergenerator", "consecutive-back");
 var newStream = streamProvider.GetStream<int>(newStreamId);
 
-await stream.SubscribeAsync((i, token) =>
+await newStream.SubscribeAsync((i, token) =>
 {
     logger.LogInformation("Received back number {Number}", i);
     return Task.CompletedTask;
@@ -62,5 +62,5 @@ var task = Task.Run(async () =>
     }
 });
 
-
-Console.ReadLine();
+await task;
+await host.StopAsync();

@@ -84,7 +84,8 @@ class Build : NukeBuild
            DotNetTasks.DotNetTest(s => s
                    .SetProjectFile(Solution)
                    .SetConfiguration(Configuration)
-                   .SetLoggers($"trx;LogFileName={TestResultDirectory / "testresults.trx"}")
+                   .SetResultsDirectory(TestResultDirectory)
+                   .SetLoggers("trx")
            );
        });
 

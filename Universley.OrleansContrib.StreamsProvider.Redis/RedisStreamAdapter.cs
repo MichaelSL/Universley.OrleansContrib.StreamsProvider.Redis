@@ -58,7 +58,9 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             }
             catch (Exception ex)
             {
+                // Rethrow so the producer's OnNextAsync fails and it can retry; swallowing loses the event.
                 _logger.LogError(ex, "Error adding event to stream {StreamId}", streamId);
+                throw;
             }
         }
     }

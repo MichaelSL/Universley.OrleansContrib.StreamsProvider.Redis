@@ -116,6 +116,56 @@ namespace RedisStreamsProvider.UnitTests
         }
 
         [Fact]
+        public async Task TrimStreamIfNeeded_RetriesAFailedTrimOnlyOncePerInterval()
+        {
+            // Arrange: every trim fails, e.g. because the server does not support the command.
+            _fakeTimeProvider.Advance(TimeSpan.FromMinutes(_receiverOptions.TrimTimeMinutes + 1));
+            _mockDatabase
+                .Setup(db => db.StreamTrimAsync(It.IsAny<RedisKey>(), It.IsAny<long>(), It.IsAny<bool>(), It.IsAny<long?>(), It.IsAny<StreamTrimMode>(), It.IsAny<CommandFlags>()))
+                .ThrowsAsync(new RedisServerException("ERR syntax error"));
+            await _receiver.TrimStreamIfNeeded();
+            _mockDatabase.Invocations.Clear();
+
+            // Act: the next poll comes well within the trim interval, the one after that past it.
+            _fakeTimeProvider.Advance(TimeSpan.FromSeconds(30));
+            await _receiver.TrimStreamIfNeeded();
+            var callsWithinInterval = _mockDatabase.Invocations.Count;
+            _fakeTimeProvider.Advance(TimeSpan.FromMinutes(_receiverOptions.TrimTimeMinutes));
+            await _receiver.TrimStreamIfNeeded();
+
+            // Assert
+            Assert.Equal(0, callsWithinInterval);
+            _mockDatabase.Verify(
+                db => db.StreamTrimAsync(It.IsAny<RedisKey>(), It.IsAny<long>(), It.IsAny<bool>(), It.IsAny<long?>(), It.IsAny<StreamTrimMode>(), It.IsAny<CommandFlags>()),
+                Moq.Times.Once());
+        }
+
+        [Fact]
+        public async Task TrimStreamIfNeeded_ExplainsTheRedisVersionRequirement_WhenAcknowledgedOnlyTrimIsASyntaxError()
+        {
+            // Arrange: Redis before 6.2 answers XTRIM ... MINID with a syntax error.
+            var receiver = new RedisStreamReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object, _fakeTimeProvider,
+                Options.Create(new RedisStreamReceiverOptions { TrimTimeMinutes = 1, TrimStrategy = RedisStreamTrimStrategy.AcknowledgedOnly }));
+            _fakeTimeProvider.Advance(TimeSpan.FromMinutes(2));
+            _mockDatabase
+                .Setup(db => db.StreamGroupInfoAsync(It.IsAny<RedisKey>(), It.IsAny<CommandFlags>()))
+                .ThrowsAsync(new RedisServerException("ERR syntax error"));
+
+            // Act
+            await receiver.TrimStreamIfNeeded();
+
+            // Assert
+            _mockLogger.Verify(
+                logger => logger.Log(
+                    LogLevel.Error,
+                    It.IsAny<EventId>(),
+                    It.Is<It.IsAnyType>((v, t) => v.ToString()!.Contains("Redis 6.2") && v.ToString()!.Contains("RedisStreamTrimStrategy.MaxLength")),
+                    It.IsAny<RedisServerException>(),
+                    It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+                Moq.Times.Once());
+        }
+
+        [Fact]
         public async Task GetQueueMessagesAsync_ShouldCallTrimStreamIfNeeded()
         {
             // Arrange

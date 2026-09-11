@@ -145,15 +145,26 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
 
         public virtual async Task TrimStreamIfNeeded()
         {
-            if (_timeProvider.GetUtcNow() - _lastTrimTime > TimeSpan.FromMinutes(_receiverOptions.TrimTimeMinutes))
+            var now = _timeProvider.GetUtcNow();
+            if (now - _lastTrimTime > TimeSpan.FromMinutes(_receiverOptions.TrimTimeMinutes))
             {
+                // Recorded before the attempt, so a trim that keeps failing (e.g. a command the server does not support)
+                // is retried once per interval rather than on every poll.
+                _lastTrimTime = now;
                 try
                 {
                     var trimmed = _receiverOptions.TrimStrategy == RedisStreamTrimStrategy.MaxLength
                         ? await _database.StreamTrimAsync(_streamKey, _receiverOptions.MaxStreamLength, useApproximateMaxLength: true)
                         : await TrimAcknowledgedEntriesAsync();
-                    _lastTrimTime = _timeProvider.GetUtcNow();
                     _logger.LogDebug("Trimmed {Count} entries from stream {QueueId} using {TrimStrategy} at {Time}", trimmed, _queueId, _receiverOptions.TrimStrategy, _lastTrimTime);
+                }
+                catch (RedisServerException ex) when (_receiverOptions.TrimStrategy == RedisStreamTrimStrategy.AcknowledgedOnly
+                                                      && ex.Message.Contains("syntax", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Redis before 6.2 does not know XTRIM ... MINID and answers with a syntax error.
+                    _logger.LogError(ex,
+                        "Error trimming stream {QueueId}: the AcknowledgedOnly trim strategy needs Redis 6.2 or later. On older servers set RedisStreamReceiverOptions.TrimStrategy = RedisStreamTrimStrategy.MaxLength",
+                        _queueId);
                 }
                 catch (Exception ex)
                 {

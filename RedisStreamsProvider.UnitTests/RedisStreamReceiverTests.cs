@@ -286,6 +286,35 @@ namespace RedisStreamsProvider.UnitTests
         }
 
         [Fact]
+        public async Task GetQueueMessagesAsync_LogsAndReturnsEmpty_WhenRecreatingGroupFails()
+        {
+            // Arrange
+            _mockDatabase.Setup(db => db.StreamReadGroupAsync(
+                    It.IsAny<RedisKey>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue?>(),
+                    It.IsAny<int?>(), It.IsAny<bool>(), It.IsAny<TimeSpan?>(), It.IsAny<CommandFlags>()))
+                .ThrowsAsync(new RedisServerException("NOGROUP No such key 'q' or consumer group 'consumer' in XREADGROUP with GROUP option"));
+            _mockDatabase.Setup(db => db.StreamCreateConsumerGroupAsync(It.IsAny<RedisKey>(), It.IsAny<RedisValue>(),
+                    It.IsAny<RedisValue?>(), It.IsAny<bool>(), It.IsAny<CommandFlags>()))
+                .ThrowsAsync(new RedisConnectionException(ConnectionFailureType.UnableToConnect, "redis down"));
+            var receiver = new RedisStreamReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object);
+
+            // Act
+            var result = await receiver.GetQueueMessagesAsync(10);
+
+            // Assert
+            Assert.NotNull(result);
+            Assert.Empty(result);
+            _mockLogger.Verify(
+                logger => logger.Log(
+                    It.Is<LogLevel>(logLevel => logLevel == LogLevel.Error),
+                    It.IsAny<EventId>(),
+                    It.Is<It.IsAnyType>((v, t) => v != null && v.ToString()!.Contains("Error recreating consumer group")),
+                    It.IsAny<Exception>(),
+                    It.Is<Func<It.IsAnyType, Exception?, string>>((v, t) => true)),
+                Times.Once);
+        }
+
+        [Fact]
         public async Task MessagesDeliveredAsync_AcknowledgesMessages()
         {
             // Arrange

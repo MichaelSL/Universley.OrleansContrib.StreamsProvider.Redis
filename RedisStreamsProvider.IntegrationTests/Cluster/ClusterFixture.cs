@@ -13,6 +13,7 @@ namespace RedisStreamsProvider.IntegrationTests.Cluster;
 public sealed class ClusterFixture : IAsyncLifetime
 {
     public const string ProviderName = "RedisStream";
+    public const int QueueCount = 2;
 
     private readonly RedisContainer _redis = new RedisBuilder("redis:7.4").Build();
 
@@ -45,7 +46,7 @@ public sealed class ClusterFixture : IAsyncLifetime
     internal static void AddRedisServices(IServiceCollection services)
     {
         services.AddSingleton<IConnectionMultiplexer>(_ => ConnectionMultiplexer.Connect(RedisConnectionString));
-        services.AddOptions<HashRingStreamQueueMapperOptions>(ProviderName).Configure(options => options.TotalQueueCount = 2);
+        services.AddOptions<HashRingStreamQueueMapperOptions>(ProviderName).Configure(options => options.TotalQueueCount = QueueCount);
     }
 }
 

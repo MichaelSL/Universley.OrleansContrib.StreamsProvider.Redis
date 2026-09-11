@@ -8,6 +8,11 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
 {
     public class RedisStreamReceiver : IQueueAdapterReceiver
     {
+        // One group and one consumer name for every silo. Orleans gives each queue to one silo at a time, and a
+        // shared consumer name lets the next owner pick up entries the previous owner read but never acknowledged.
+        private const string GroupName = "consumer";
+        private const string ConsumerName = "consumer";
+
         private readonly QueueId _queueId;
         private readonly IDatabase _database;
         private readonly ILogger<RedisStreamReceiver> _logger;
@@ -45,10 +50,10 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         {
             try
             {
-                var events = _database.StreamReadGroupAsync(_queueId.ToString(), "consumer", _queueId.ToString(), _lastId, maxCount);
+                var events = _database.StreamReadGroupAsync(_queueId.ToString(), GroupName, ConsumerName, _lastId, maxCount);
                 pendingTasks = events;
                 _lastId = ">";
-                var batches = (await events).Select(e => new RedisStreamBatchContainer(e)).ToList<IBatchContainer>();
+                var batches = await ToBatchesAsync(await events);
                 await TrimStreamIfNeeded();
 
                 return batches;
@@ -62,8 +67,33 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             {
                 pendingTasks = null;
             }
+        }
 
+        private async Task<List<IBatchContainer>> ToBatchesAsync(StreamEntry[] entries)
+        {
+            var batches = new List<IBatchContainer>(entries.Length);
+            List<RedisValue>? unreadable = null;
+            foreach (var entry in entries)
+            {
+                try
+                {
+                    batches.Add(new RedisStreamBatchContainer(entry));
+                }
+                catch (Exception ex) when (ex is ArgumentException or FormatException or OverflowException)
+                {
+                    // Entries deleted while still pending come back with no fields. Either way this entry can never
+                    // be delivered, and leaving it pending would keep it (and everything read with it) stuck.
+                    _logger.LogError(ex, "Acknowledging unreadable entry {EntryId} in stream {QueueId} without delivering it", entry.Id, _queueId);
+                    (unreadable ??= []).Add(entry.Id);
+                }
+            }
 
+            if (unreadable is not null)
+            {
+                await _database.StreamAcknowledgeAsync(_queueId.ToString(), GroupName, [.. unreadable]);
+            }
+
+            return batches;
         }
 
         public virtual async Task TrimStreamIfNeeded()
@@ -88,7 +118,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         {
             try
             {
-                var task = _database.StreamCreateConsumerGroupAsync(_queueId.ToString(), "consumer", "$", true);
+                var task = _database.StreamCreateConsumerGroupAsync(_queueId.ToString(), GroupName, "$", true);
                 await task.WaitAsync(timeout);
             }
             catch (Exception ex) when (ex.Message.Contains("name already exists")) { }
@@ -107,7 +137,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
                     var container = message as RedisStreamBatchContainer;
                     if (container != null)
                     {
-                        var ack = _database.StreamAcknowledgeAsync(_queueId.ToString(), "consumer", container.StreamEntryId);
+                        var ack = _database.StreamAcknowledgeAsync(_queueId.ToString(), GroupName, container.StreamEntryId);
                         pendingTasks = ack;
                         await ack;
                     }

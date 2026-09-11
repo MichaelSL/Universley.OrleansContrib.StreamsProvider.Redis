@@ -19,6 +19,41 @@ namespace RedisStreamsProvider.UnitTests
             _queueId = QueueId.GetQueueId("testQueue", 0, 0); // Added the missing 'hash' parameter
         }
 
+        private static StreamEntry Entry(string id) => new(id, [
+            new("streamNamespace", "testNamespace"),
+            new("streamKey", "testKey"),
+            new("eventType", "testEventType"),
+            new("data", "testData")
+        ]);
+
+        [Fact]
+        public async Task GetQueueMessagesAsync_SkipsAndAcknowledgesUnreadableEntries()
+        {
+            // Arrange: "2-0" has no data field, like an entry deleted while it was still pending.
+            var unreadable = new StreamEntry("2-0", [
+                new("streamNamespace", "testNamespace"),
+                new("streamKey", "testKey"),
+                new("eventType", "testEventType")
+            ]);
+            _mockDatabase.Setup(db => db.StreamReadGroupAsync(
+                    It.IsAny<RedisKey>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue?>(),
+                    It.IsAny<int?>(), It.IsAny<bool>(), It.IsAny<TimeSpan?>(), It.IsAny<CommandFlags>()))
+                .ReturnsAsync(new[] { Entry("1-0"), unreadable, Entry("3-0") });
+            var receiver = new RedisStreamReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object);
+
+            // Act
+            var result = await receiver.GetQueueMessagesAsync(10);
+
+            // Assert
+            Assert.NotNull(result);
+            Assert.Equal(new[] { "1-0", "3-0" }, result.Cast<RedisStreamBatchContainer>().Select(b => b.StreamEntryId));
+            _mockDatabase.Verify(db => db.StreamAcknowledgeAsync(
+                    _queueId.ToString(), "consumer",
+                    It.Is<RedisValue[]>(ids => ids.Length == 1 && ids[0] == "2-0"),
+                    It.IsAny<CommandFlags>()),
+                Times.Once);
+        }
+
         [Fact]
         public async Task GetQueueMessagesAsync_ReturnsBatches()
         {

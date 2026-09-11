@@ -60,6 +60,28 @@ public sealed class ReceiverTests(RedisFixture redis)
     }
 
     [Fact]
+    public async Task Entry_deleted_while_pending_does_not_block_the_entries_around_it()
+    {
+        var harness = new ProviderHarness(redis.Connection);
+        var previousOwner = harness.CreateReceiver();
+        await previousOwner.Initialize(TimeSpan.FromSeconds(5));
+        await harness.PublishAsync(new TestEvent(1, "a"), new TestEvent(2, "b"), new TestEvent(3, "c"));
+        var readBeforeCrash = await ProviderHarness.ReadAsync(previousOwner, expected: 3);
+        Assert.Equal(3, readBeforeCrash.Count);
+        // previousOwner "crashes" without acknowledging, and the middle entry is deleted while still pending.
+        await harness.Database.StreamDeleteAsync(harness.Key, [ProviderHarness.EntryId(readBeforeCrash[1])]);
+
+        var newOwner = harness.CreateReceiver();
+        await newOwner.Initialize(TimeSpan.FromSeconds(5));
+        var redelivered = await ProviderHarness.ReadAsync(newOwner, expected: 2);
+        await newOwner.MessagesDeliveredAsync(redelivered);
+
+        Assert.Equal(new[] { 1, 3 }, redelivered.SelectMany(b => b.GetEvents<TestEvent>()).Select(e => e.Item1.Id));
+        var pending = await harness.Database.StreamPendingAsync(harness.Key, "consumer");
+        Assert.Equal(0, pending.PendingMessageCount);
+    }
+
+    [Fact]
     public async Task Entries_published_before_the_first_receiver_started_are_delivered()
     {
         var harness = new ProviderHarness(redis.Connection);

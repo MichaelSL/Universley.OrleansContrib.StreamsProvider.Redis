@@ -186,8 +186,10 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
 
             var pending = await _database.StreamPendingAsync(_streamKey, GroupName);
             var minId = GetAcknowledgedTrimId(lastDeliveredId, pending.PendingMessageCount, pending.LowestPendingMessageId);
+            // Without LIMIT, approximate trimming stops after 100 * stream-node-max-entries (10,000 by default) entries.
+            // MINID needs Redis 6.2, which also supports LIMIT.
             var trimmed = minId is { } id
-                ? await _database.StreamTrimByMinIdAsync(_streamKey, id, useApproximateMaxLength: true)
+                ? await _database.StreamTrimByMinIdAsync(_streamKey, id, useApproximateMaxLength: true, limit: long.MaxValue)
                 : 0;
 
             var remaining = await _database.StreamLengthAsync(_streamKey);

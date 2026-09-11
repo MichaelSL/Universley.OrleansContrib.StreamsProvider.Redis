@@ -12,12 +12,14 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         // so whichever silo owns the queue reads as the same consumer and picks up entries a previous owner read but
         // never acknowledged. Both values are part of the wire format; do not change them.
         private const string GroupName = "consumer";
-        private string ConsumerName => _queueId.ToString();
+        private string ConsumerName => _streamKey;
 
         private const string NewMessages = ">";
         private const int MaxReadCount = 1000;
 
         private readonly QueueId _queueId;
+        // The stream key (and consumer name): the queue id's string form, computed once.
+        private readonly string _streamKey;
         private readonly IDatabase _database;
         private readonly ILogger<RedisStreamReceiver> _logger;
         // Until the pending list is drained, reads walk it from this cursor; afterwards they ask for new messages.
@@ -37,6 +39,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
                                  IOptions<RedisStreamReceiverOptions>? receiverOptions = null)
         {
             _queueId = queueId;
+            _streamKey = queueId.ToString();
             _database = database ?? throw new ArgumentNullException(nameof(database));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _timeProvider = timeProvider ?? TimeProvider.System;
@@ -100,7 +103,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
 
         private async Task<StreamEntry[]> ReadGroupAsync(RedisValue position, int count)
         {
-            var read = _database.StreamReadGroupAsync(_queueId.ToString(), GroupName, ConsumerName, position, count);
+            var read = _database.StreamReadGroupAsync(_streamKey, GroupName, ConsumerName, position, count);
             pendingTasks = read;
             return await read;
         }
@@ -128,7 +131,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             {
                 try
                 {
-                    await _database.StreamAcknowledgeAsync(_queueId.ToString(), GroupName, [.. unreadable]);
+                    await _database.StreamAcknowledgeAsync(_streamKey, GroupName, [.. unreadable]);
                 }
                 catch (Exception ex)
                 {
@@ -147,7 +150,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
                 try
                 {
                     var trimmed = _receiverOptions.TrimStrategy == RedisStreamTrimStrategy.MaxLength
-                        ? await _database.StreamTrimAsync(_queueId.ToString(), _receiverOptions.MaxStreamLength, useApproximateMaxLength: true)
+                        ? await _database.StreamTrimAsync(_streamKey, _receiverOptions.MaxStreamLength, useApproximateMaxLength: true)
                         : await TrimAcknowledgedEntriesAsync();
                     _lastTrimTime = _timeProvider.GetUtcNow();
                     _logger.LogDebug("Trimmed {Count} entries from stream {QueueId} using {TrimStrategy} at {Time}", trimmed, _queueId, _receiverOptions.TrimStrategy, _lastTrimTime);
@@ -161,9 +164,8 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
 
         private async Task<long> TrimAcknowledgedEntriesAsync()
         {
-            var key = _queueId.ToString();
             string? lastDeliveredId = null;
-            foreach (var group in await _database.StreamGroupInfoAsync(key))
+            foreach (var group in await _database.StreamGroupInfoAsync(_streamKey))
             {
                 if (group.Name == GroupName)
                 {
@@ -171,13 +173,13 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
                 }
             }
 
-            var pending = await _database.StreamPendingAsync(key, GroupName);
+            var pending = await _database.StreamPendingAsync(_streamKey, GroupName);
             var minId = GetAcknowledgedTrimId(lastDeliveredId, pending.PendingMessageCount, pending.LowestPendingMessageId);
             var trimmed = minId is { } id
-                ? await _database.StreamTrimByMinIdAsync(key, id, useApproximateMaxLength: true)
+                ? await _database.StreamTrimByMinIdAsync(_streamKey, id, useApproximateMaxLength: true)
                 : 0;
 
-            var remaining = await _database.StreamLengthAsync(key);
+            var remaining = await _database.StreamLengthAsync(_streamKey);
             if (remaining > _receiverOptions.MaxStreamLength)
             {
                 _logger.LogWarning(
@@ -224,7 +226,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         {
             try
             {
-                await _database.StreamCreateConsumerGroupAsync(_queueId.ToString(), GroupName, "0", createStream: true);
+                await _database.StreamCreateConsumerGroupAsync(_streamKey, GroupName, "0", createStream: true);
             }
             catch (RedisServerException ex) when (ex.Message.StartsWith("BUSYGROUP", StringComparison.Ordinal))
             {
@@ -256,7 +258,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
 
             try
             {
-                var ack = _database.StreamAcknowledgeAsync(_queueId.ToString(), GroupName, ids);
+                var ack = _database.StreamAcknowledgeAsync(_streamKey, GroupName, ids);
                 pendingTasks = ack;
                 await ack;
             }

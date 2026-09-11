@@ -199,18 +199,17 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
 
         public async Task MessagesDeliveredAsync(IList<IBatchContainer> messages)
         {
+            var ids = messages.OfType<RedisStreamBatchContainer>().Select(m => (RedisValue)m.StreamEntryId).ToArray();
+            if (ids.Length == 0)
+            {
+                return;
+            }
+
             try
             {
-                foreach (var message in messages)
-                {
-                    var container = message as RedisStreamBatchContainer;
-                    if (container != null)
-                    {
-                        var ack = _database.StreamAcknowledgeAsync(_queueId.ToString(), GroupName, container.StreamEntryId);
-                        pendingTasks = ack;
-                        await ack;
-                    }
-                }
+                var ack = _database.StreamAcknowledgeAsync(_queueId.ToString(), GroupName, ids);
+                pendingTasks = ack;
+                await ack;
             }
             catch (Exception ex)
             {

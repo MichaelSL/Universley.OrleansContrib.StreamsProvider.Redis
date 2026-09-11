@@ -315,38 +315,43 @@ namespace RedisStreamsProvider.UnitTests
         }
 
         [Fact]
-        public async Task MessagesDeliveredAsync_AcknowledgesMessages()
+        public async Task MessagesDeliveredAsync_AcknowledgesAllMessagesInOneCall()
         {
             // Arrange
             var messages = new List<IBatchContainer>
             {
-                new RedisStreamBatchContainer(new StreamEntry("1-0", [
-                    new("streamNamespace", "testNamespace"),
-                    new("streamKey", "testKey"),
-                    new("eventType", "testEventType" ),
-                    new( "data", "testData" )
-                ])),
-                new RedisStreamBatchContainer(new StreamEntry("2-0", [
-                    new("streamNamespace", "testNamespace"),
-                    new("streamKey", "testKey"),
-                    new("eventType", "testEventType" ),
-                    new( "data", "testData" )
-                ]))
+                new RedisStreamBatchContainer(Entry("1-0")),
+                new RedisStreamBatchContainer(Entry("2-0"))
             };
-            _mockDatabase.Setup(db => db.StreamAcknowledgeAsync(It.IsAny<RedisKey>(), It.IsAny<RedisValue>(),
-                    It.IsAny<RedisValue>(), CommandFlags.None))
-                .ReturnsAsync(2);
-
             var receiver = new RedisStreamReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object);
 
             // Act
             await receiver.MessagesDeliveredAsync(messages);
 
             // Assert
-            _mockDatabase.Verify(
-                db => db.StreamAcknowledgeAsync(_queueId.ToString(), "consumer", "1-0", CommandFlags.None), Times.Once);
-            _mockDatabase.Verify(
-                db => db.StreamAcknowledgeAsync(_queueId.ToString(), "consumer", "2-0", CommandFlags.None), Times.Once);
+            _mockDatabase.Verify(db => db.StreamAcknowledgeAsync(
+                    _queueId.ToString(), "consumer",
+                    It.Is<RedisValue[]>(ids => ids.Length == 2 && ids[0] == "1-0" && ids[1] == "2-0"),
+                    CommandFlags.None),
+                Times.Once);
+            _mockDatabase.Verify(db => db.StreamAcknowledgeAsync(
+                    It.IsAny<RedisKey>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue>(), It.IsAny<CommandFlags>()),
+                Times.Never);
+        }
+
+        [Fact]
+        public async Task MessagesDeliveredAsync_DoesNothing_ForEmptyList()
+        {
+            // Arrange
+            var receiver = new RedisStreamReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object);
+
+            // Act
+            await receiver.MessagesDeliveredAsync(new List<IBatchContainer>());
+
+            // Assert
+            _mockDatabase.Verify(db => db.StreamAcknowledgeAsync(
+                    It.IsAny<RedisKey>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue[]>(), It.IsAny<CommandFlags>()),
+                Times.Never);
         }
 
         [Fact]
@@ -355,20 +360,13 @@ namespace RedisStreamsProvider.UnitTests
             // Arrange
             var messages = new List<IBatchContainer>
             {
-                new RedisStreamBatchContainer(new StreamEntry("1-0", [
-                    new("streamNamespace", "testNamespace"),
-                    new("streamKey", "testKey"),
-                    new("eventType", "testEventType" ),
-                    new( "data", "testData" )
-                ]))
+                new RedisStreamBatchContainer(Entry("1-0"))
             };
             var mockDatabase = new Mock<IDatabase>();
-            var mockLoggerFactory = new Mock<ILoggerFactory>();
             var mockLogger = new Mock<ILogger<RedisStreamReceiver>>();
-            mockLoggerFactory.Setup(factory => factory.CreateLogger(It.IsAny<string>())).Returns(mockLogger.Object);
             var receiver = new RedisStreamReceiver(_queueId, mockDatabase.Object, mockLogger.Object);
             mockDatabase.Setup(db => db.StreamAcknowledgeAsync(It.IsAny<RedisKey>(), It.IsAny<RedisValue>(),
-                    It.IsAny<RedisValue>(), CommandFlags.None))
+                    It.IsAny<RedisValue[]>(), It.IsAny<CommandFlags>()))
                 .ThrowsAsync(new Exception("Test exception"));
 
             // Act

@@ -87,4 +87,19 @@ public sealed class ReceiverTests(RedisFixture redis)
 
         Assert.Single(read);
     }
+
+    [Fact]
+    public async Task Acknowledging_a_batch_clears_all_of_its_pending_entries()
+    {
+        var harness = new ProviderHarness(redis.Connection);
+        var receiver = harness.CreateReceiver();
+        await receiver.Initialize(TimeSpan.FromSeconds(5));
+        await harness.PublishAsync(Enumerable.Range(0, 50).Select(i => new TestEvent(i, "e")).ToArray());
+
+        var read = await ProviderHarness.ReadAsync(receiver, expected: 50);
+        await receiver.MessagesDeliveredAsync(read);
+
+        var pending = await harness.Database.StreamPendingAsync(harness.Key, "consumer");
+        Assert.Equal(0, pending.PendingMessageCount);
+    }
 }

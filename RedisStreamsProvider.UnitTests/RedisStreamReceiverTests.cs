@@ -36,6 +36,32 @@ namespace RedisStreamsProvider.UnitTests
         private static string[] Ids(IList<IBatchContainer>? batches) =>
             batches!.Cast<RedisStreamBatchContainer>().Select(b => b.StreamEntryId).ToArray();
 
+        // No data field, like an entry deleted while it was still pending.
+        private static StreamEntry Unreadable(string id) => new(id, [
+            new("streamNamespace", "testNamespace"),
+            new("streamKey", "testKey"),
+            new("eventType", "testEventType")
+        ]);
+
+        private static List<IBatchContainer> Delivered(params string[] ids) =>
+            ids.Select(id => (IBatchContainer)new RedisStreamBatchContainer(Entry(id))).ToList();
+
+        /// <summary>Records the ids of every XACK; the first <paramref name="failFirst"/> of them fail.</summary>
+        private List<string[]> RecordAcknowledgements(int failFirst)
+        {
+            var calls = new List<string[]>();
+            _mockDatabase.Setup(db => db.StreamAcknowledgeAsync(
+                    It.IsAny<RedisKey>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue[]>(), It.IsAny<CommandFlags>()))
+                .Returns((RedisKey _, RedisValue _, RedisValue[] ids, CommandFlags _) =>
+                {
+                    calls.Add(ids.Select(id => id.ToString()).ToArray());
+                    return calls.Count <= failFirst
+                        ? Task.FromException<long>(new RedisTimeoutException("Timeout performing XACK", CommandStatus.Sent))
+                        : Task.FromResult((long)ids.Length);
+                });
+            return calls;
+        }
+
         [Fact]
         public async Task GetQueueMessagesAsync_DrainsAllPendingEntriesBeforeReadingNewOnes()
         {
@@ -337,6 +363,45 @@ namespace RedisStreamsProvider.UnitTests
             _mockDatabase.Verify(db => db.StreamAcknowledgeAsync(
                     It.IsAny<RedisKey>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue>(), It.IsAny<CommandFlags>()),
                 Times.Never);
+        }
+
+        [Fact]
+        public async Task MessagesDeliveredAsync_RetriesFailedAcknowledgementsWithTheNextOne()
+        {
+            // Arrange
+            var acks = RecordAcknowledgements(failFirst: 1);
+            var receiver = new RedisStreamReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object);
+
+            // Act
+            await receiver.MessagesDeliveredAsync(Delivered("1-0", "2-0"));
+            await receiver.MessagesDeliveredAsync(Delivered("3-0"));
+            await receiver.MessagesDeliveredAsync(Delivered("4-0"));
+
+            // Assert: the failed ids ride along with the next XACK, and are dropped once it succeeds.
+            Assert.Equal(3, acks.Count);
+            Assert.Equal(new[] { "1-0", "2-0", "3-0" }, acks[1].Order());
+            Assert.Equal(new[] { "4-0" }, acks[2]);
+        }
+
+        [Fact]
+        public async Task MessagesDeliveredAsync_RetriesUnreadableEntriesWhoseAcknowledgementFailed()
+        {
+            // Arrange
+            _mockDatabase.Setup(db => db.StreamReadGroupAsync(
+                    It.IsAny<RedisKey>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue?>(),
+                    It.IsAny<int?>(), It.IsAny<bool>(), It.IsAny<TimeSpan?>(), It.IsAny<CommandFlags>()))
+                .ReturnsAsync(new[] { Entry("1-0"), Unreadable("2-0"), Entry("3-0") });
+            var acks = RecordAcknowledgements(failFirst: 1);
+            var receiver = new RedisStreamReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object);
+
+            // Act
+            var batches = await receiver.GetQueueMessagesAsync(10);
+            await receiver.MessagesDeliveredAsync(batches!);
+
+            // Assert
+            Assert.Equal(2, acks.Count);
+            Assert.Equal(new[] { "2-0" }, acks[0]);
+            Assert.Equal(new[] { "1-0", "2-0", "3-0" }, acks[1].Order());
         }
 
         [Fact]

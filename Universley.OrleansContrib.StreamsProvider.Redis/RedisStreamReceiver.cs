@@ -25,6 +25,9 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         // Until the pending list is drained, reads walk it from this cursor; afterwards they ask for new messages.
         private RedisValue _pendingCursor = "0";
         private bool _drainingPending = true;
+        // Entries whose XACK failed. They stay pending in Redis, so they are sent again with the next acknowledgement
+        // (XACK is idempotent); otherwise nothing would acknowledge them before the next restart or queue handoff.
+        private readonly List<RedisValue> _failedAcknowledgements = [];
         private Task? pendingTasks;
         private DateTimeOffset _lastTrimTime;
 
@@ -136,7 +139,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Error acknowledging unreadable entries in stream {QueueId}", _queueId);
-                    // Left pending, they are re-read and skipped again the next time the pending list is drained (restart or queue handoff).
+                    _failedAcknowledgements.AddRange(unreadable);
                 }
             }
 
@@ -263,7 +266,8 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
 
         public async Task MessagesDeliveredAsync(IList<IBatchContainer> messages)
         {
-            var ids = messages.OfType<RedisStreamBatchContainer>().Select(m => (RedisValue)m.StreamEntryId).ToArray();
+            var delivered = messages.OfType<RedisStreamBatchContainer>().Select(m => (RedisValue)m.StreamEntryId).ToArray();
+            RedisValue[] ids = [.. _failedAcknowledgements, .. delivered];
             if (ids.Length == 0)
             {
                 return;
@@ -274,10 +278,12 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
                 var ack = _database.StreamAcknowledgeAsync(_streamKey, GroupName, ids);
                 pendingTasks = ack;
                 await ack;
+                _failedAcknowledgements.Clear();
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error acknowledging messages in stream {QueueId}", _queueId);
+                _failedAcknowledgements.AddRange(delivered);
             }
             finally
             {

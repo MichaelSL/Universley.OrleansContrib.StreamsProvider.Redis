@@ -25,6 +25,9 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         // Until the pending list is drained, reads walk it from this cursor; afterwards they ask for new messages.
         private RedisValue _pendingCursor = "0";
         private bool _drainingPending = true;
+        // The newest entry handed to Orleans (or acknowledged as unreadable). Reads return ids in ascending order and
+        // each read starts past the previous one, so every entry this receiver has read and not handed on is newer.
+        private RedisValue _lastReturnedId = RedisValue.Null;
         // Entries whose XACK failed. They stay pending in Redis, so they are sent again with the next acknowledgement
         // (XACK is idempotent); otherwise nothing would acknowledge them before the next restart or queue handoff.
         private readonly List<RedisValue> _failedAcknowledgements = [];
@@ -66,6 +69,11 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
                 var batches = await ToBatchesAsync(entries);
                 await TrimStreamIfNeeded();
 
+                if (entries.Length > 0)
+                {
+                    _lastReturnedId = entries[^1].Id;
+                }
+
                 return batches;
             }
             catch (RedisServerException ex) when (ex.Message.StartsWith("NOGROUP", StringComparison.Ordinal))
@@ -78,6 +86,11 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error reading from stream {QueueId}", _queueId);
+                // The read may have failed after Redis had already moved entries to this consumer's pending list
+                // (a timeout or dropped connection loses the reply). Walk the pending list from the last entry Orleans
+                // got, so those entries are delivered now rather than after the next restart or queue handoff.
+                _pendingCursor = _lastReturnedId.IsNull ? "0" : _lastReturnedId;
+                _drainingPending = true;
                 return default;
             }
             finally
@@ -257,6 +270,8 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
                 await EnsureConsumerGroupAsync();
                 _pendingCursor = "0";
                 _drainingPending = true;
+                // Ids from the lost stream say nothing about the new one, whose ids can even be lower.
+                _lastReturnedId = RedisValue.Null;
             }
             catch (Exception ex)
             {

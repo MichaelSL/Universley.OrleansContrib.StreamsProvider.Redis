@@ -83,6 +83,67 @@ namespace RedisStreamsProvider.UnitTests
             Assert.Equal(new[] { "4-0" }, Ids(third));
         }
 
+        private void SetupNewMessageReads(params Func<Task<StreamEntry[]>>[] replies)
+        {
+            var call = 0;
+            _mockDatabase.Setup(db => db.StreamReadGroupAsync(
+                    It.IsAny<RedisKey>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue>(),
+                    It.Is<RedisValue?>(p => p == ">"),
+                    It.IsAny<int?>(), It.IsAny<bool>(), It.IsAny<TimeSpan?>(), It.IsAny<CommandFlags>()))
+                .Returns(() => call < replies.Length ? replies[call++]() : Task.FromResult(Array.Empty<StreamEntry>()));
+        }
+
+        private static Func<Task<StreamEntry[]>> Returns(params StreamEntry[] entries) => () => Task.FromResult(entries);
+
+        private static Func<Task<StreamEntry[]>> Throws(Exception ex) => () => Task.FromException<StreamEntry[]>(ex);
+
+        [Fact]
+        public async Task GetQueueMessagesAsync_RereadsEntriesPastTheLastOneReturned_AfterAFailedRead()
+        {
+            // Arrange: the second read times out after Redis already moved "3-0" to this consumer's pending list.
+            SetupRead("0");
+            SetupNewMessageReads(
+                Returns(Entry("1-0"), Entry("2-0")),
+                Throws(new RedisTimeoutException("Timeout performing XREADGROUP", CommandStatus.Sent)));
+            SetupRead("2-0", Entry("3-0"));
+            var receiver = new RedisStreamReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object);
+
+            // Act
+            var first = await receiver.GetQueueMessagesAsync(10);
+            var failed = await receiver.GetQueueMessagesAsync(10);
+            var recovered = await receiver.GetQueueMessagesAsync(10);
+
+            // Assert
+            Assert.Equal(new[] { "1-0", "2-0" }, Ids(first));
+            Assert.Null(failed);
+            Assert.Equal(new[] { "3-0" }, Ids(recovered));
+        }
+
+        [Fact]
+        public async Task GetQueueMessagesAsync_RereadsThePendingListFromTheStart_AfterAFailedReadFromARecreatedGroup()
+        {
+            // Arrange: "5-0" came from the stream before it was lost; the recreated stream's ids need not be higher.
+            SetupRead("0");
+            SetupNewMessageReads(
+                Returns(Entry("5-0")),
+                Throws(new RedisServerException("NOGROUP No such key or consumer group")),
+                Throws(new RedisConnectionException(ConnectionFailureType.SocketFailure, "drop")));
+            var receiver = new RedisStreamReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object);
+            await receiver.GetQueueMessagesAsync(10);
+            await receiver.GetQueueMessagesAsync(10);
+            await receiver.GetQueueMessagesAsync(10);
+            _mockDatabase.Invocations.Clear();
+
+            // Act
+            await receiver.GetQueueMessagesAsync(10);
+
+            // Assert
+            _mockDatabase.Verify(db => db.StreamReadGroupAsync(
+                    It.IsAny<RedisKey>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue>(), It.Is<RedisValue?>(p => p == "0"),
+                    It.IsAny<int?>(), It.IsAny<bool>(), It.IsAny<TimeSpan?>(), It.IsAny<CommandFlags>()),
+                Times.Once);
+        }
+
         [Fact]
         public async Task GetQueueMessagesAsync_ReadsAtMost1000_WhenMaxCountIsUnlimited()
         {

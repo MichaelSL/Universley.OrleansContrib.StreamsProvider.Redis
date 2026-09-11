@@ -40,4 +40,22 @@ public sealed class ReceiverTests(RedisFixture redis)
         var pending = await harness.Database.StreamPendingAsync(harness.Key, "consumer");
         Assert.Equal(0, pending.PendingMessageCount);
     }
+
+    [Fact]
+    public async Task New_owner_redelivers_every_entry_the_previous_owner_never_acknowledged()
+    {
+        var harness = new ProviderHarness(redis.Connection);
+        var previousOwner = harness.CreateReceiver();
+        await previousOwner.Initialize(TimeSpan.FromSeconds(5));
+        await harness.PublishAsync(new TestEvent(1, "a"), new TestEvent(2, "b"), new TestEvent(3, "c"));
+        var readBeforeCrash = await ProviderHarness.ReadAsync(previousOwner, expected: 3);
+        Assert.Equal(3, readBeforeCrash.Count);
+        // previousOwner "crashes" here: it never acknowledges what it read.
+
+        var newOwner = harness.CreateReceiver();
+        await newOwner.Initialize(TimeSpan.FromSeconds(5));
+        var redelivered = await ProviderHarness.ReadAsync(newOwner, expected: 3, maxCount: 2);
+
+        Assert.Equal(readBeforeCrash.Select(ProviderHarness.EntryId), redelivered.Select(ProviderHarness.EntryId));
+    }
 }

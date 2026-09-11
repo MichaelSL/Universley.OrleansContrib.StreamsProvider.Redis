@@ -14,10 +14,15 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         private const string GroupName = "consumer";
         private string ConsumerName => _queueId.ToString();
 
+        private const string NewMessages = ">";
+        private const int MaxReadCount = 1000;
+
         private readonly QueueId _queueId;
         private readonly IDatabase _database;
         private readonly ILogger<RedisStreamReceiver> _logger;
-        private string _lastId = "0";
+        // Until the pending list is drained, reads walk it from this cursor; afterwards they ask for new messages.
+        private RedisValue _pendingCursor = "0";
+        private bool _drainingPending = true;
         private Task? pendingTasks;
         private DateTimeOffset _lastTrimTime;
 
@@ -51,10 +56,8 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         {
             try
             {
-                var events = _database.StreamReadGroupAsync(_queueId.ToString(), GroupName, ConsumerName, _lastId, maxCount);
-                pendingTasks = events;
-                _lastId = ">";
-                var batches = await ToBatchesAsync(await events);
+                var entries = await ReadEntriesAsync(maxCount);
+                var batches = await ToBatchesAsync(entries);
                 await TrimStreamIfNeeded();
 
                 return batches;
@@ -68,6 +71,31 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             {
                 pendingTasks = null;
             }
+        }
+
+        private async Task<StreamEntry[]> ReadEntriesAsync(int maxCount)
+        {
+            var count = maxCount is > 0 and < MaxReadCount ? maxCount : MaxReadCount;
+            if (_drainingPending)
+            {
+                var pending = await ReadGroupAsync(_pendingCursor, count);
+                if (pending.Length > 0)
+                {
+                    _pendingCursor = pending[^1].Id;
+                    return pending;
+                }
+
+                _drainingPending = false;
+            }
+
+            return await ReadGroupAsync(NewMessages, count);
+        }
+
+        private async Task<StreamEntry[]> ReadGroupAsync(RedisValue position, int count)
+        {
+            var read = _database.StreamReadGroupAsync(_queueId.ToString(), GroupName, ConsumerName, position, count);
+            pendingTasks = read;
+            return await read;
         }
 
         private async Task<List<IBatchContainer>> ToBatchesAsync(StreamEntry[] entries)
@@ -98,8 +126,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Error acknowledging unreadable entries in stream {QueueId}", _queueId);
-                    // Don't rethrow; return the good batches that were parsed successfully. Unacknowledged unreadable
-                    // entries will be re-read and skipped again later.
+                    // Left pending, they are re-read and skipped again the next time the pending list is drained (restart or queue handoff).
                 }
             }
 

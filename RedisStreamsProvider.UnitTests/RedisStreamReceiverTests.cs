@@ -26,6 +26,53 @@ namespace RedisStreamsProvider.UnitTests
             new("data", "testData")
         ]);
 
+        private void SetupRead(RedisValue position, params StreamEntry[] entries) =>
+            _mockDatabase.Setup(db => db.StreamReadGroupAsync(
+                    It.IsAny<RedisKey>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue>(),
+                    It.Is<RedisValue?>(p => p == position),
+                    It.IsAny<int?>(), It.IsAny<bool>(), It.IsAny<TimeSpan?>(), It.IsAny<CommandFlags>()))
+                .ReturnsAsync(entries);
+
+        private static string[] Ids(IList<IBatchContainer>? batches) =>
+            batches!.Cast<RedisStreamBatchContainer>().Select(b => b.StreamEntryId).ToArray();
+
+        [Fact]
+        public async Task GetQueueMessagesAsync_DrainsAllPendingEntriesBeforeReadingNewOnes()
+        {
+            // Arrange: three entries are pending from a previous owner, one new entry is waiting.
+            SetupRead("0", Entry("1-0"), Entry("2-0"));
+            SetupRead("2-0", Entry("3-0"));
+            SetupRead("3-0");
+            SetupRead(">", Entry("4-0"));
+            var receiver = new RedisStreamReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object);
+
+            // Act
+            var first = await receiver.GetQueueMessagesAsync(2);
+            var second = await receiver.GetQueueMessagesAsync(2);
+            var third = await receiver.GetQueueMessagesAsync(2);
+
+            // Assert
+            Assert.Equal(new[] { "1-0", "2-0" }, Ids(first));
+            Assert.Equal(new[] { "3-0" }, Ids(second));
+            Assert.Equal(new[] { "4-0" }, Ids(third));
+        }
+
+        [Fact]
+        public async Task GetQueueMessagesAsync_ReadsAtMost1000_WhenMaxCountIsUnlimited()
+        {
+            // Arrange
+            var receiver = new RedisStreamReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object);
+
+            // Act
+            await receiver.GetQueueMessagesAsync(QueueAdapterConstants.UNLIMITED_GET_QUEUE_MSG);
+
+            // Assert
+            _mockDatabase.Verify(db => db.StreamReadGroupAsync(
+                    It.IsAny<RedisKey>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue?>(),
+                    1000, It.IsAny<bool>(), It.IsAny<TimeSpan?>(), It.IsAny<CommandFlags>()),
+                Times.AtLeastOnce);
+        }
+
         [Fact]
         public async Task GetQueueMessagesAsync_SkipsAndAcknowledgesUnreadableEntries()
         {

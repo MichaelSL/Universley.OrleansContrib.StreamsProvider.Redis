@@ -55,6 +55,54 @@ namespace RedisStreamsProvider.UnitTests
         }
 
         [Fact]
+        public async Task GetQueueMessagesAsync_ReadsAsConsumerNamedAfterTheQueue()
+        {
+            // Arrange
+            _mockDatabase.Setup(db => db.StreamReadGroupAsync(
+                    It.IsAny<RedisKey>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue?>(),
+                    It.IsAny<int?>(), It.IsAny<bool>(), It.IsAny<TimeSpan?>(), It.IsAny<CommandFlags>()))
+                .ReturnsAsync(new[] { Entry("1-0") });
+            var receiver = new RedisStreamReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object);
+
+            // Act
+            var result = await receiver.GetQueueMessagesAsync(10);
+
+            // Assert
+            Assert.NotNull(result);
+            _mockDatabase.Verify(db => db.StreamReadGroupAsync(
+                    _queueId.ToString(), "consumer", _queueId.ToString(), It.IsAny<RedisValue?>(),
+                    It.IsAny<int?>(), It.IsAny<bool>(), It.IsAny<TimeSpan?>(), It.IsAny<CommandFlags>()),
+                Times.AtLeastOnce);
+        }
+
+        [Fact]
+        public async Task GetQueueMessagesAsync_ReturnsReadableEntries_WhenAcknowledgingUnreadableOnesFails()
+        {
+            // Arrange: "2-0" has no data field, like an entry deleted while it was still pending.
+            var unreadable = new StreamEntry("2-0", [
+                new("streamNamespace", "testNamespace"),
+                new("streamKey", "testKey"),
+                new("eventType", "testEventType")
+            ]);
+            _mockDatabase.Setup(db => db.StreamReadGroupAsync(
+                    It.IsAny<RedisKey>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue?>(),
+                    It.IsAny<int?>(), It.IsAny<bool>(), It.IsAny<TimeSpan?>(), It.IsAny<CommandFlags>()))
+                .ReturnsAsync(new[] { Entry("1-0"), unreadable, Entry("3-0") });
+            _mockDatabase.Setup(db => db.StreamAcknowledgeAsync(
+                    It.IsAny<RedisKey>(), It.IsAny<RedisValue>(),
+                    It.IsAny<RedisValue[]>(), It.IsAny<CommandFlags>()))
+                .ThrowsAsync(new RedisException("ack failed"));
+            var receiver = new RedisStreamReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object);
+
+            // Act
+            var result = await receiver.GetQueueMessagesAsync(10);
+
+            // Assert
+            Assert.NotNull(result);
+            Assert.Equal(new[] { "1-0", "3-0" }, result.Cast<RedisStreamBatchContainer>().Select(b => b.StreamEntryId));
+        }
+
+        [Fact]
         public async Task GetQueueMessagesAsync_ReturnsBatches()
         {
             // Arrange

@@ -8,10 +8,11 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
 {
     public class RedisStreamReceiver : IQueueAdapterReceiver
     {
-        // One group and one consumer name for every silo. Orleans gives each queue to one silo at a time, and a
-        // shared consumer name lets the next owner pick up entries the previous owner read but never acknowledged.
+        // One group per stream, and the queue id as consumer name. Orleans gives each queue to one silo at a time,
+        // so whichever silo owns the queue reads as the same consumer and picks up entries a previous owner read but
+        // never acknowledged. Both values are part of the wire format; do not change them.
         private const string GroupName = "consumer";
-        private const string ConsumerName = "consumer";
+        private string ConsumerName => _queueId.ToString();
 
         private readonly QueueId _queueId;
         private readonly IDatabase _database;
@@ -90,7 +91,16 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
 
             if (unreadable is not null)
             {
-                await _database.StreamAcknowledgeAsync(_queueId.ToString(), GroupName, [.. unreadable]);
+                try
+                {
+                    await _database.StreamAcknowledgeAsync(_queueId.ToString(), GroupName, [.. unreadable]);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error acknowledging unreadable entries in stream {QueueId}", _queueId);
+                    // Don't rethrow; return the good batches that were parsed successfully. Unacknowledged unreadable
+                    // entries will be re-read and skipped again later.
+                }
             }
 
             return batches;

@@ -130,7 +130,11 @@ await host.StopAsync();
 services.AddOptions<RedisStreamReceiverOptions>("RedisStream")
     .Configure(options =>
     {
-        // Maximum number of messages to keep in the Redis stream before trimming. Default: 1000
+        // How old entries are removed. Default: AcknowledgedOnly.
+        //   AcknowledgedOnly - delete only delivered and acknowledged entries; never drops undelivered events (Redis 6.2+).
+        //   MaxLength        - legacy: cap the stream at ~MaxStreamLength entries, even if they were not delivered yet.
+        options.TrimStrategy = RedisStreamTrimStrategy.AcknowledgedOnly;
+        // MaxLength: entries kept after trimming. AcknowledgedOnly: backlog size that triggers a warning log. Default: 1000
         options.MaxStreamLength = 1000;
         // Interval in minutes between stream trim operations. Default: 5
         options.TrimTimeMinutes = 5;

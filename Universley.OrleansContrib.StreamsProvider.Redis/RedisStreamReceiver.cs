@@ -142,20 +142,69 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
 
         public virtual async Task TrimStreamIfNeeded()
         {
-            // Changed: Use _timeProvider.GetUtcNow() and options for trim parameters
             if (_timeProvider.GetUtcNow() - _lastTrimTime > TimeSpan.FromMinutes(_receiverOptions.TrimTimeMinutes))
             {
                 try
                 {
-                    var trim = await _database.StreamTrimAsync(_queueId.ToString(), _receiverOptions.MaxStreamLength, useApproximateMaxLength: true);
+                    var trimmed = _receiverOptions.TrimStrategy == RedisStreamTrimStrategy.MaxLength
+                        ? await _database.StreamTrimAsync(_queueId.ToString(), _receiverOptions.MaxStreamLength, useApproximateMaxLength: true)
+                        : await TrimAcknowledgedEntriesAsync();
                     _lastTrimTime = _timeProvider.GetUtcNow();
-                    _logger.LogDebug("Trimmed stream {QueueId} to {MaxStreamLength} entries at {Time}", _queueId, _receiverOptions.MaxStreamLength, _lastTrimTime);
+                    _logger.LogDebug("Trimmed {Count} entries from stream {QueueId} using {TrimStrategy} at {Time}", trimmed, _queueId, _receiverOptions.TrimStrategy, _lastTrimTime);
                 }
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Error trimming stream {QueueId}", _queueId);
                 }
             }
+        }
+
+        private async Task<long> TrimAcknowledgedEntriesAsync()
+        {
+            var key = _queueId.ToString();
+            string? lastDeliveredId = null;
+            foreach (var group in await _database.StreamGroupInfoAsync(key))
+            {
+                if (group.Name == GroupName)
+                {
+                    lastDeliveredId = group.LastDeliveredId;
+                }
+            }
+
+            var pending = await _database.StreamPendingAsync(key, GroupName);
+            var minId = GetAcknowledgedTrimId(lastDeliveredId, pending.PendingMessageCount, pending.LowestPendingMessageId);
+            var trimmed = minId is { } id
+                ? await _database.StreamTrimByMinIdAsync(key, id, useApproximateMaxLength: true)
+                : 0;
+
+            var remaining = await _database.StreamLengthAsync(key);
+            if (remaining > _receiverOptions.MaxStreamLength)
+            {
+                _logger.LogWarning(
+                    "Stream {QueueId} still holds {Remaining} entries after trimming, more than MaxStreamLength {MaxStreamLength}; consumers may be falling behind",
+                    _queueId, remaining, _receiverOptions.MaxStreamLength);
+            }
+
+            return trimmed;
+        }
+
+        /// <summary>
+        /// Returns the id below which every entry has been delivered and acknowledged, or null when nothing is safe to trim.
+        /// Entries up to the group's last-delivered id were delivered; those not in the pending list were acknowledged.
+        /// </summary>
+        internal static RedisValue? GetAcknowledgedTrimId(string? lastDeliveredId, long pendingCount, RedisValue lowestPendingId)
+        {
+            if (pendingCount > 0)
+            {
+                return lowestPendingId;
+            }
+
+            if (string.IsNullOrEmpty(lastDeliveredId) || lastDeliveredId == "0-0")
+            {
+                return null;
+            }
+
+            return lastDeliveredId;
         }
 
         public async Task Initialize(TimeSpan timeout)

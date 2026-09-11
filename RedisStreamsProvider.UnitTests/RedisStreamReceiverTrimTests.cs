@@ -27,7 +27,7 @@ namespace RedisStreamsProvider.UnitTests
             _initialTime = new DateTimeOffset(2025, 5, 13, 12, 0, 0, TimeSpan.Zero);
             _fakeTimeProvider = new FakeTimeProvider(_initialTime);
             // Initialize options for tests - these values should match what the tests expect
-            _receiverOptions = new RedisStreamReceiverOptions { TrimTimeMinutes = 1, MaxStreamLength = 128 };
+            _receiverOptions = new RedisStreamReceiverOptions { TrimTimeMinutes = 1, MaxStreamLength = 128, TrimStrategy = RedisStreamTrimStrategy.MaxLength };
             IOptions<RedisStreamReceiverOptions> options = Options.Create(_receiverOptions);
             _receiver = new RedisStreamReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object, _fakeTimeProvider, options);
         }
@@ -138,6 +138,26 @@ namespace RedisStreamsProvider.UnitTests
 
             // Assert
             Assert.True(testReceiver.WasTrimCalled, "TrimStreamIfNeeded should have been called");
+        }
+
+        [Fact]
+        public void TrimStrategy_DefaultsToAcknowledgedOnly()
+        {
+            Assert.Equal(RedisStreamTrimStrategy.AcknowledgedOnly, new RedisStreamReceiverOptions().TrimStrategy);
+        }
+
+        [Theory]
+        [InlineData(null, 0, null, null)]          // group never delivered anything
+        [InlineData("0-0", 0, null, null)]         // group created, nothing delivered yet
+        [InlineData("9-0", 0, null, "9-0")]        // everything delivered is acknowledged
+        [InlineData("9-0", 2, "5-0", "5-0")]       // oldest unacknowledged entry bounds the trim
+        public void GetAcknowledgedTrimId_ReturnsOldestEntryStillNeeded(string? lastDeliveredId, int pendingCount, string? lowestPendingId, string? expected)
+        {
+            var lowest = lowestPendingId is null ? RedisValue.Null : (RedisValue)lowestPendingId;
+
+            var result = RedisStreamReceiver.GetAcknowledgedTrimId(lastDeliveredId, pendingCount, lowest);
+
+            Assert.Equal(expected, result?.ToString());
         }
 
         private class TestReceiver : RedisStreamReceiver

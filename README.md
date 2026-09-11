@@ -7,6 +7,9 @@ This library provides an integration of Redis Streams with Microsoft Orleans, al
 - .NET 8.0
 - .NET 10.0
 
+### Requirements
+- Redis 6.2 or later (the default trim strategy uses `XTRIM MINID`).
+
 ## How to Use the Redis Provider with Orleans
 
 ### 1. Silo (Server) Setup
@@ -140,6 +143,21 @@ services.AddOptions<RedisStreamReceiverOptions>("RedisStream")
         options.TrimTimeMinutes = 5;
     });
 ```
+
+## Delivery Guarantees
+
+- **At-least-once.** An entry is acknowledged only after Orleans has delivered it. If a silo stops or crashes, the silo that takes over its queue redelivers everything that was read but not acknowledged. Make consumers idempotent; duplicates are possible, gaps are not.
+- **Publish failures surface to the producer.** If Redis rejects a write, `OnNextAsync` throws, so the producer can retry. If one call publishes several events and a later one fails, the earlier ones are already in the stream, so a retry can duplicate them.
+- **No silent trimming of undelivered events.** With the default `TrimStrategy.AcknowledgedOnly` the stream grows while consumers are behind, and a warning is logged once it passes `MaxStreamLength`. Watch the stream length in Redis (`XLEN`) if memory matters.
+- **Self-healing.** If a stream key disappears (Redis restart without persistence, failover, eviction), the receiver recreates its consumer group and carries on.
+- **Unreadable entries are skipped.** An entry without the expected fields is logged at error level and acknowledged, so it cannot block the entries around it.
+
+## Limitations
+
+- Events are matched by **short type name**. A subscriber to `GetStream<T>` receives only events whose runtime type has the same `Name` as `T`. Subscribing with a base class or interface receives nothing.
+- Payloads are serialized with `System.Text.Json`, so event types must round-trip through it.
+- Orleans `RequestContext` is not carried with events.
+- Streams are not rewindable: subscribers cannot resume from an earlier sequence token.
 
 ## Dependencies
 - Microsoft.Orleans.Streaming 10.0.1

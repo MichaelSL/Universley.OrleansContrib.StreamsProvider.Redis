@@ -62,6 +62,13 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
 
                 return batches;
             }
+            catch (RedisServerException ex) when (ex.Message.StartsWith("NOGROUP", StringComparison.Ordinal))
+            {
+                // The stream key (and with it the group) is gone. Without this every later read would fail forever.
+                _logger.LogWarning(ex, "Consumer group for stream {QueueId} is missing, recreating it", _queueId);
+                await TryRecreateConsumerGroupAsync();
+                return [];
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error reading from stream {QueueId}", _queueId);
@@ -155,13 +162,38 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         {
             try
             {
-                var task = _database.StreamCreateConsumerGroupAsync(_queueId.ToString(), GroupName, "$", true);
-                await task.WaitAsync(timeout);
+                await EnsureConsumerGroupAsync().WaitAsync(timeout);
             }
-            catch (Exception ex) when (ex.Message.Contains("name already exists")) { }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error initializing stream {QueueId}", _queueId);
+            }
+        }
+
+        // Starts at "0" rather than "$" so entries published before the group existed are delivered, not skipped.
+        private async Task EnsureConsumerGroupAsync()
+        {
+            try
+            {
+                await _database.StreamCreateConsumerGroupAsync(_queueId.ToString(), GroupName, "0", createStream: true);
+            }
+            catch (RedisServerException ex) when (ex.Message.StartsWith("BUSYGROUP", StringComparison.Ordinal))
+            {
+                // The group already exists, which is the normal case on every start after the first.
+            }
+        }
+
+        private async Task TryRecreateConsumerGroupAsync()
+        {
+            try
+            {
+                await EnsureConsumerGroupAsync();
+                _pendingCursor = "0";
+                _drainingPending = true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error recreating consumer group for stream {QueueId}", _queueId);
             }
         }
 

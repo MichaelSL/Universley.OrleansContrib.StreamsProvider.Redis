@@ -58,4 +58,33 @@ public sealed class ReceiverTests(RedisFixture redis)
 
         Assert.Equal(readBeforeCrash.Select(ProviderHarness.EntryId), redelivered.Select(ProviderHarness.EntryId));
     }
+
+    [Fact]
+    public async Task Entries_published_before_the_first_receiver_started_are_delivered()
+    {
+        var harness = new ProviderHarness(redis.Connection);
+        await harness.PublishAsync(new TestEvent(1, "early"));
+
+        var receiver = harness.CreateReceiver();
+        await receiver.Initialize(TimeSpan.FromSeconds(5));
+        var read = await ProviderHarness.ReadAsync(receiver, expected: 1);
+
+        Assert.Single(read);
+    }
+
+    [Fact]
+    public async Task Receiver_recovers_when_the_stream_key_disappears()
+    {
+        var harness = new ProviderHarness(redis.Connection);
+        var receiver = harness.CreateReceiver();
+        await receiver.Initialize(TimeSpan.FromSeconds(5));
+
+        // Same effect as a Redis restart without persistence, a failover to an empty replica, or key eviction.
+        await harness.Database.KeyDeleteAsync(harness.Key);
+        await receiver.GetQueueMessagesAsync(10);
+        await harness.PublishAsync(new TestEvent(1, "after"));
+        var read = await ProviderHarness.ReadAsync(receiver, expected: 1);
+
+        Assert.Single(read);
+    }
 }

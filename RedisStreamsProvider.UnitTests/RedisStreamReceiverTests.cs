@@ -214,7 +214,7 @@ namespace RedisStreamsProvider.UnitTests
 
             // Assert
             _mockDatabase.Verify(
-                db => db.StreamCreateConsumerGroupAsync(_queueId.ToString(), "consumer", "$", true, CommandFlags.None),
+                db => db.StreamCreateConsumerGroupAsync(_queueId.ToString(), "consumer", "0", true, CommandFlags.None),
                 Times.Once);
         }
 
@@ -242,6 +242,46 @@ namespace RedisStreamsProvider.UnitTests
                     It.Is<It.IsAnyType>((v, t) => v != null && v.ToString()!.Contains("Error initializing stream")),
                     It.IsAny<Exception>(),
                     It.Is<Func<It.IsAnyType, Exception?, string>>((v, t) => true)),
+                Times.Once);
+        }
+
+        [Fact]
+        public async Task Initialize_DoesNotLogError_WhenGroupAlreadyExists()
+        {
+            // Arrange
+            _mockDatabase.Setup(db => db.StreamCreateConsumerGroupAsync(It.IsAny<RedisKey>(), It.IsAny<RedisValue>(),
+                    It.IsAny<RedisValue?>(), It.IsAny<bool>(), It.IsAny<CommandFlags>()))
+                .ThrowsAsync(new RedisServerException("BUSYGROUP Consumer Group name already exists"));
+            var receiver = new RedisStreamReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object);
+
+            // Act
+            await receiver.Initialize(TimeSpan.FromSeconds(5));
+
+            // Assert
+            _mockLogger.Verify(
+                logger => logger.Log(LogLevel.Error, It.IsAny<EventId>(), It.IsAny<It.IsAnyType>(), It.IsAny<Exception>(),
+                    It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+                Times.Never);
+        }
+
+        [Fact]
+        public async Task GetQueueMessagesAsync_RecreatesGroup_WhenGroupIsMissing()
+        {
+            // Arrange
+            _mockDatabase.Setup(db => db.StreamReadGroupAsync(
+                    It.IsAny<RedisKey>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue>(), It.IsAny<RedisValue?>(),
+                    It.IsAny<int?>(), It.IsAny<bool>(), It.IsAny<TimeSpan?>(), It.IsAny<CommandFlags>()))
+                .ThrowsAsync(new RedisServerException("NOGROUP No such key 'q' or consumer group 'consumer' in XREADGROUP with GROUP option"));
+            var receiver = new RedisStreamReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object);
+
+            // Act
+            var result = await receiver.GetQueueMessagesAsync(10);
+
+            // Assert
+            Assert.NotNull(result);
+            Assert.Empty(result);
+            _mockDatabase.Verify(
+                db => db.StreamCreateConsumerGroupAsync(_queueId.ToString(), "consumer", "0", true, CommandFlags.None),
                 Times.Once);
         }
 

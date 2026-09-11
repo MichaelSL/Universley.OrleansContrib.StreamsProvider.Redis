@@ -18,8 +18,9 @@ public sealed class StreamDeliveryTests(ClusterFixture fixture) : IClassFixture<
             await stream.OnNextAsync(i);
         }
 
-        await Eventually.WaitUntilAsync(() => ReceivedEvents.For(key).Length >= 20, TimeSpan.FromSeconds(30));
-        Assert.Equal(Enumerable.Range(0, 20), ReceivedEvents.For(key));
+        // Delivery is at-least-once: a queue rebalance right after the cluster starts can redeliver events.
+        await Eventually.WaitUntilAsync(() => ReceivedEvents.For(key).Distinct().Count() >= 20, TimeSpan.FromSeconds(30));
+        Assert.Equal(Enumerable.Range(0, 20), ReceivedEvents.For(key).Distinct());
     }
 
     [Fact]
@@ -39,8 +40,8 @@ public sealed class StreamDeliveryTests(ClusterFixture fixture) : IClassFixture<
 
         foreach (var key in keys)
         {
-            await Eventually.WaitUntilAsync(() => ReceivedEvents.For(key).Length >= 10, TimeSpan.FromSeconds(30));
-            Assert.Equal(Enumerable.Range(0, 10), ReceivedEvents.For(key));
+            await Eventually.WaitUntilAsync(() => ReceivedEvents.For(key).Distinct().Count() >= 10, TimeSpan.FromSeconds(30));
+            Assert.Equal(Enumerable.Range(0, 10), ReceivedEvents.For(key).Distinct());
         }
     }
 }

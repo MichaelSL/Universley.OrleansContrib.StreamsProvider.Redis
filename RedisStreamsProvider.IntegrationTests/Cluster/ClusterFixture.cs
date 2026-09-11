@@ -38,8 +38,13 @@ public sealed class ClusterFixture : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
-        await Cluster.StopAllSilosAsync();
-        await Cluster.DisposeAsync();
+        // Cluster is still null when InitializeAsync failed before building it.
+        if (Cluster is not null)
+        {
+            await Cluster.StopAllSilosAsync();
+            await Cluster.DisposeAsync();
+        }
+
         await _redis.DisposeAsync();
     }
 

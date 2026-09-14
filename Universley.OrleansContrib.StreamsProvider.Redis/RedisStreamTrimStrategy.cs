@@ -5,7 +5,8 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
     {
         /// <summary>
         /// Remove only entries that were delivered and acknowledged. Never drops an undelivered event, so the stream
-        /// grows while consumers are behind. Requires Redis 6.2 or later.
+        /// grows while consumers are behind; <see cref="RedisStreamReceiverOptions.BacklogWarningLength"/> sets when that
+        /// is logged. Requires Redis 6.2 or later.
         /// </summary>
         AcknowledgedOnly = 0,
 

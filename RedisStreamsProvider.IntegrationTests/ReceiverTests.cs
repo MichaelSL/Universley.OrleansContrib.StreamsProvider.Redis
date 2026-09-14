@@ -19,7 +19,7 @@ public sealed class ReceiverTests(RedisFixture redis)
 
         var received = Assert.Single(read.SelectMany(b => b.GetEvents<TestEvent>()));
         Assert.Equal(new TestEvent(1, "one"), received.Item1);
-        var pending = await harness.Database.StreamPendingAsync(harness.Key, "consumer");
+        var pending = await harness.Database.StreamPendingAsync(harness.Key, RedisStreamWireFormat.GroupName);
         Assert.Equal(0, pending.PendingMessageCount);
     }
 
@@ -37,7 +37,7 @@ public sealed class ReceiverTests(RedisFixture redis)
         await receiver.MessagesDeliveredAsync(read);
 
         Assert.Equal(new[] { 1, 2 }, read.SelectMany(b => b.GetEvents<TestEvent>()).Select(e => e.Item1.Id));
-        var pending = await harness.Database.StreamPendingAsync(harness.Key, "consumer");
+        var pending = await harness.Database.StreamPendingAsync(harness.Key, RedisStreamWireFormat.GroupName);
         Assert.Equal(0, pending.PendingMessageCount);
     }
 
@@ -77,7 +77,7 @@ public sealed class ReceiverTests(RedisFixture redis)
         await newOwner.MessagesDeliveredAsync(redelivered);
 
         Assert.Equal(new[] { 1, 3 }, redelivered.SelectMany(b => b.GetEvents<TestEvent>()).Select(e => e.Item1.Id));
-        var pending = await harness.Database.StreamPendingAsync(harness.Key, "consumer");
+        var pending = await harness.Database.StreamPendingAsync(harness.Key, RedisStreamWireFormat.GroupName);
         Assert.Equal(0, pending.PendingMessageCount);
     }
 
@@ -121,7 +121,7 @@ public sealed class ReceiverTests(RedisFixture redis)
         var read = await ProviderHarness.ReadAsync(receiver, expected: 50);
         await receiver.MessagesDeliveredAsync(read);
 
-        var pending = await harness.Database.StreamPendingAsync(harness.Key, "consumer");
+        var pending = await harness.Database.StreamPendingAsync(harness.Key, RedisStreamWireFormat.GroupName);
         Assert.Equal(0, pending.PendingMessageCount);
     }
 }

@@ -46,8 +46,8 @@ builder.ConfigureServices(services =>
     services.AddOptions<RedisStreamReceiverOptions>("RedisStream")
         .Configure(options =>
         {
-            options.MaxStreamLength = 1000; // max messages kept in Redis stream before trimming
-            options.TrimTimeMinutes = 5;    // how often the stream is trimmed
+            options.BacklogWarningLength = 1000; // warn when more entries than this are still in the stream after trimming
+            options.TrimTimeMinutes = 5;         // how often the stream is trimmed
         });
 });
 ```
@@ -138,7 +138,9 @@ services.AddOptions<RedisStreamReceiverOptions>("RedisStream")
         //   AcknowledgedOnly - delete only delivered and acknowledged entries; never drops undelivered events (Redis 6.2+).
         //   MaxLength        - legacy: cap the stream at ~MaxStreamLength entries, even if they were not delivered yet.
         options.TrimStrategy = RedisStreamTrimStrategy.AcknowledgedOnly;
-        // MaxLength: entries kept after trimming. AcknowledgedOnly: backlog size that triggers a warning log. Default: 1000
+        // AcknowledgedOnly only: log a warning when more entries than this are still in the stream after trimming. Default: 1000
+        options.BacklogWarningLength = 1000;
+        // MaxLength only: roughly how many entries are kept after trimming. Default: 1000
         options.MaxStreamLength = 1000;
         // Interval in minutes between stream trim operations. Default: 5
         options.TrimTimeMinutes = 5;
@@ -150,7 +152,7 @@ services.AddOptions<RedisStreamReceiverOptions>("RedisStream")
 - **At-least-once.** An entry is acknowledged only after Orleans has delivered it. If a silo stops or crashes, the silo that takes over its queue redelivers everything that was read but not acknowledged. Make consumers idempotent; duplicates are possible.
 - **No gaps, with two exceptions.** With `TrimStrategy.MaxLength`, entries can be trimmed before they are delivered when consumers fall behind. And if a stream key is lost (Redis restart without persistence, failover to an empty replica, or eviction), the events in it are gone: self-healing resumes delivery but cannot restore them. Set `maxmemory-policy noeviction` on the Redis instance so Redis never evicts stream keys.
 - **Publish failures surface to the producer.** If Redis rejects a write, `OnNextAsync` throws, so the producer can retry. If one call publishes several events and a later one fails, the earlier ones are already in the stream, so a retry can duplicate them.
-- **No silent trimming of undelivered events.** With the default `TrimStrategy.AcknowledgedOnly` the stream grows while consumers are behind, and a warning is logged once it passes `MaxStreamLength`. Watch the stream length in Redis (`XLEN`) if memory matters.
+- **No silent trimming of undelivered events.** With the default `TrimStrategy.AcknowledgedOnly` the stream grows while consumers are behind, and a warning is logged once it passes `BacklogWarningLength`. Watch the stream length in Redis (`XLEN`) if memory matters.
 - **Self-healing.** If a stream key disappears (Redis restart without persistence, failover, eviction), the receiver recreates its consumer group and carries on.
 - **Unreadable entries are skipped.** An entry without the expected fields is logged at error level and acknowledged (or, if that acknowledgement fails, retried with the next one), so it cannot block the entries around it.
 
@@ -166,6 +168,8 @@ services.AddOptions<RedisStreamReceiverOptions>("RedisStream")
 ## Upgrading from earlier versions
 
 The first receiver on this version drains each queue's whole pending list before reading new entries. Events that earlier versions left stuck there are delivered late, and possibly out of order relative to newer events. Entries that were trimmed while still pending are logged at error level and skipped.
+
+Trimming now defaults to `TrimStrategy.AcknowledgedOnly`, which ignores `MaxStreamLength`: the stream is no longer capped at that length. To keep the old cap, set `TrimStrategy = RedisStreamTrimStrategy.MaxLength`.
 
 ## Dependencies
 - Microsoft.Orleans.Streaming 10.0.1

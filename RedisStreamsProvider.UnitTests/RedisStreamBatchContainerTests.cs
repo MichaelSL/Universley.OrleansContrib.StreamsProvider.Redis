@@ -12,10 +12,10 @@ namespace RedisStreamsProvider.UnitTests
             // Arrange
             var streamEntry = new StreamEntry("1-0", new NameValueEntry[]
             {
-                        new NameValueEntry("streamNamespace", "testNamespace"),
-                        new NameValueEntry("streamKey", "testKey"),
-                        new NameValueEntry("eventType", "TestEvent"),
-                        new NameValueEntry("data", JsonSerializer.Serialize(new TestEvent { Id = 1, Name = "Test" }))
+                        new NameValueEntry(RedisStreamWireFormat.StreamNamespaceField, "testNamespace"),
+                        new NameValueEntry(RedisStreamWireFormat.StreamKeyField, "testKey"),
+                        new NameValueEntry(RedisStreamWireFormat.EventTypeField, "TestEvent"),
+                        new NameValueEntry(RedisStreamWireFormat.DataField, JsonSerializer.Serialize(new TestEvent { Id = 1, Name = "Test" }))
             });
 
             // Act
@@ -33,10 +33,10 @@ namespace RedisStreamsProvider.UnitTests
             // Arrange
             var streamEntry = new StreamEntry("1-0", new NameValueEntry[]
             {
-                        new NameValueEntry("streamNamespace", "testNamespace"),
-                        new NameValueEntry("streamKey", "testKey"),
-                        new NameValueEntry("eventType", "TestEvent"),
-                        new NameValueEntry("data", JsonSerializer.Serialize(new TestEvent { Id = 1, Name = "Test" }))
+                        new NameValueEntry(RedisStreamWireFormat.StreamNamespaceField, "testNamespace"),
+                        new NameValueEntry(RedisStreamWireFormat.StreamKeyField, "testKey"),
+                        new NameValueEntry(RedisStreamWireFormat.EventTypeField, "TestEvent"),
+                        new NameValueEntry(RedisStreamWireFormat.DataField, JsonSerializer.Serialize(new TestEvent { Id = 1, Name = "Test" }))
             });
             var container = new RedisStreamBatchContainer(streamEntry);
 
@@ -56,10 +56,10 @@ namespace RedisStreamsProvider.UnitTests
             // Arrange
             var streamEntry = new StreamEntry("1-0", new NameValueEntry[]
             {
-                        new NameValueEntry("streamNamespace", "testNamespace"),
-                        new NameValueEntry("streamKey", "testKey"),
-                        new NameValueEntry("eventType", "TestEvent"),
-                        new NameValueEntry("data", JsonSerializer.Serialize(new TestEvent { Id = 1, Name = "Test" }))
+                        new NameValueEntry(RedisStreamWireFormat.StreamNamespaceField, "testNamespace"),
+                        new NameValueEntry(RedisStreamWireFormat.StreamKeyField, "testKey"),
+                        new NameValueEntry(RedisStreamWireFormat.EventTypeField, "TestEvent"),
+                        new NameValueEntry(RedisStreamWireFormat.DataField, JsonSerializer.Serialize(new TestEvent { Id = 1, Name = "Test" }))
             });
             var container = new RedisStreamBatchContainer(streamEntry);
 
@@ -76,10 +76,10 @@ namespace RedisStreamsProvider.UnitTests
             // Arrange
             var invalidStreamEntry = new StreamEntry("1-0", new NameValueEntry[]
             {
-                new NameValueEntry("streamNamespace", ""),
-                new NameValueEntry("streamKey", ""),
-                new NameValueEntry("eventType", ""),
-                new NameValueEntry("data", "")
+                new NameValueEntry(RedisStreamWireFormat.StreamNamespaceField, ""),
+                new NameValueEntry(RedisStreamWireFormat.StreamKeyField, ""),
+                new NameValueEntry(RedisStreamWireFormat.EventTypeField, ""),
+                new NameValueEntry(RedisStreamWireFormat.DataField, "")
             });
 
             // Act & Assert

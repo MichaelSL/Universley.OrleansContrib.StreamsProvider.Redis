@@ -61,14 +61,14 @@ public sealed class TrimmingTests(RedisFixture redis)
 
         // Published, read and acknowledged directly on Redis, which is much faster than through the receiver.
         await Task.WhenAll(Enumerable.Range(0, count).Select(i => harness.Database.StreamAddAsync(harness.Key, [
-            new NameValueEntry("streamNamespace", "it-namespace"),
-            new NameValueEntry("streamKey", "it-key"),
-            new NameValueEntry("eventType", nameof(TestEvent)),
-            new NameValueEntry("data", $$"""{"Id":{{i}},"Name":"e"}""")
+            new NameValueEntry(RedisStreamWireFormat.StreamNamespaceField, "it-namespace"),
+            new NameValueEntry(RedisStreamWireFormat.StreamKeyField, "it-key"),
+            new NameValueEntry(RedisStreamWireFormat.EventTypeField, nameof(TestEvent)),
+            new NameValueEntry(RedisStreamWireFormat.DataField, $$"""{"Id":{{i}},"Name":"e"}""")
         ])));
-        var read = await harness.Database.StreamReadGroupAsync(harness.Key, "consumer", harness.Key.ToString(), ">", count);
+        var read = await harness.Database.StreamReadGroupAsync(harness.Key, RedisStreamWireFormat.GroupName, harness.Key.ToString(), ">", count);
         Assert.Equal(count, read.Length);
-        await harness.Database.StreamAcknowledgeAsync(harness.Key, "consumer", read.Select(e => e.Id).ToArray());
+        await harness.Database.StreamAcknowledgeAsync(harness.Key, RedisStreamWireFormat.GroupName, read.Select(e => e.Id).ToArray());
 
         time.Advance(PastTrimInterval);
         await receiver.TrimStreamIfNeeded();
@@ -78,11 +78,11 @@ public sealed class TrimmingTests(RedisFixture redis)
     }
 
     [Fact]
-    public async Task Default_trimming_warns_when_the_backlog_exceeds_MaxStreamLength()
+    public async Task Default_trimming_warns_when_the_backlog_exceeds_BacklogWarningLength()
     {
         var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var logger = new FakeLogger<RedisStreamReceiver>();
-        var harness = new ProviderHarness(redis.Connection, new RedisStreamReceiverOptions { MaxStreamLength = 10, TrimTimeMinutes = 1 });
+        var harness = new ProviderHarness(redis.Connection, new RedisStreamReceiverOptions { BacklogWarningLength = 10, TrimTimeMinutes = 1 });
         var receiver = harness.CreateReceiver(time, logger);
         await receiver.Initialize(TimeSpan.FromSeconds(5));
         await harness.PublishAsync(Enumerable.Range(0, 20).Select(i => new TestEvent(i, "e")).ToArray());

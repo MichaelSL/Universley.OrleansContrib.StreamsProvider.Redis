@@ -20,6 +20,7 @@
 
 	<ItemGroup>
 		<InternalsVisibleTo Include="RedisStreamsProvider.UnitTests" />
+		<InternalsVisibleTo Include="RedisStreamsProvider.IntegrationTests" />
 	</ItemGroup>
 
 </Project>

@@ -71,14 +71,7 @@ namespace RedisStreamsProvider.UnitTests
 
             // Assert
             Assert.Equal("Test exception", thrown.Message);
-            mockLogger.Verify(
-                logger => logger.Log(
-                    It.Is<LogLevel>(logLevel => logLevel == LogLevel.Error),
-                    It.IsAny<EventId>(),
-                    It.Is<It.IsAnyType>((v, t) => v != null && v.ToString()!.Contains("Error adding event to stream")),
-                    It.IsAny<Exception>(),
-                    It.Is<Func<It.IsAnyType, Exception?, string>>((v, t) => true)),
-                Times.Once);
+            mockLogger.VerifyLogged(LogLevel.Error, "Error adding event to stream", Times.Once());
         }
     }
 }

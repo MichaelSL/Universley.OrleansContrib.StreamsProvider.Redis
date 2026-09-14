@@ -48,12 +48,12 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             {
                 foreach (var @event in events)
                 {
-                    NameValueEntry streamNamespaceEntry = new("streamNamespace", streamId.Namespace);
-                    NameValueEntry streamKeyEntry = new("streamKey", streamId.Key);
-                    NameValueEntry eventTypeEntry = new("eventType", @event!.GetType().Name);
-                    NameValueEntry dataEntry = new("data", JsonSerializer.Serialize(@event));
+                    NameValueEntry streamNamespaceEntry = new(RedisStreamWireFormat.StreamNamespaceField, streamId.Namespace);
+                    NameValueEntry streamKeyEntry = new(RedisStreamWireFormat.StreamKeyField, streamId.Key);
+                    NameValueEntry eventTypeEntry = new(RedisStreamWireFormat.EventTypeField, @event!.GetType().Name);
+                    NameValueEntry dataEntry = new(RedisStreamWireFormat.DataField, JsonSerializer.Serialize(@event));
                     var queueId = _hashRingBasedStreamQueueMapper.GetQueueForStream(streamId);
-                    await _database.StreamAddAsync(queueId.ToString(), [streamNamespaceEntry, streamKeyEntry, eventTypeEntry, dataEntry]);
+                    await _database.StreamAddAsync(RedisStreamWireFormat.StreamKey(queueId), [streamNamespaceEntry, streamKeyEntry, eventTypeEntry, dataEntry]);
                 }
             }
             catch (Exception ex)

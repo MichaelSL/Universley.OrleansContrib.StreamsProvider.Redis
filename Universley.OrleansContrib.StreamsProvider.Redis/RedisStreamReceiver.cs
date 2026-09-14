@@ -8,10 +8,29 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
 {
     public class RedisStreamReceiver : IQueueAdapterReceiver
     {
+        // One group per stream, and the queue id as consumer name. Orleans gives each queue to one silo at a time,
+        // so whichever silo owns the queue reads as the same consumer and picks up entries a previous owner read but
+        // never acknowledged. Both values are part of the wire format; do not change them.
+        private const string GroupName = "consumer";
+        private string ConsumerName => _streamKey;
+
+        private const string NewMessages = ">";
+        private const int MaxReadCount = 1000;
+
         private readonly QueueId _queueId;
+        // The stream key (and consumer name): the queue id's string form, computed once.
+        private readonly string _streamKey;
         private readonly IDatabase _database;
         private readonly ILogger<RedisStreamReceiver> _logger;
-        private string _lastId = "0";
+        // Until the pending list is drained, reads walk it from this cursor; afterwards they ask for new messages.
+        private RedisValue _pendingCursor = "0";
+        private bool _drainingPending = true;
+        // The newest entry handed to Orleans (or acknowledged as unreadable). Reads return ids in ascending order and
+        // each read starts past the previous one, so every entry this receiver has read and not handed on is newer.
+        private RedisValue _lastReturnedId = RedisValue.Null;
+        // Entries whose XACK failed. They stay pending in Redis, so they are sent again with the next acknowledgement
+        // (XACK is idempotent); otherwise nothing would acknowledge them before the next restart or queue handoff.
+        private readonly List<RedisValue> _failedAcknowledgements = [];
         private Task? pendingTasks;
         private DateTimeOffset _lastTrimTime;
 
@@ -26,6 +45,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
                                  IOptions<RedisStreamReceiverOptions>? receiverOptions = null)
         {
             _queueId = queueId;
+            _streamKey = queueId.ToString();
             _database = database ?? throw new ArgumentNullException(nameof(database));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _timeProvider = timeProvider ?? TimeProvider.System;
@@ -45,37 +65,122 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         {
             try
             {
-                var events = _database.StreamReadGroupAsync(_queueId.ToString(), "consumer", _queueId.ToString(), _lastId, maxCount);
-                pendingTasks = events;
-                _lastId = ">";
-                var batches = (await events).Select(e => new RedisStreamBatchContainer(e)).ToList<IBatchContainer>();
+                var entries = await ReadEntriesAsync(maxCount);
+                var batches = await ToBatchesAsync(entries);
                 await TrimStreamIfNeeded();
 
+                if (entries.Length > 0)
+                {
+                    _lastReturnedId = entries[^1].Id;
+                }
+
                 return batches;
+            }
+            catch (RedisServerException ex) when (ex.Message.StartsWith("NOGROUP", StringComparison.Ordinal))
+            {
+                // The stream key (and with it the group) is gone. Without this every later read would fail forever.
+                _logger.LogWarning(ex, "Consumer group for stream {QueueId} is missing, recreating it", _queueId);
+                await TryRecreateConsumerGroupAsync();
+                return [];
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error reading from stream {QueueId}", _queueId);
+                // The read may have failed after Redis had already moved entries to this consumer's pending list
+                // (a timeout or dropped connection loses the reply). Walk the pending list from the last entry Orleans
+                // got, so those entries are delivered now rather than after the next restart or queue handoff.
+                _pendingCursor = _lastReturnedId.IsNull ? "0" : _lastReturnedId;
+                _drainingPending = true;
                 return default;
             }
             finally
             {
                 pendingTasks = null;
             }
+        }
 
+        private async Task<StreamEntry[]> ReadEntriesAsync(int maxCount)
+        {
+            var count = maxCount is > 0 and < MaxReadCount ? maxCount : MaxReadCount;
+            if (_drainingPending)
+            {
+                var pending = await ReadGroupAsync(_pendingCursor, count);
+                if (pending.Length > 0)
+                {
+                    _pendingCursor = pending[^1].Id;
+                    return pending;
+                }
 
+                _drainingPending = false;
+            }
+
+            return await ReadGroupAsync(NewMessages, count);
+        }
+
+        private async Task<StreamEntry[]> ReadGroupAsync(RedisValue position, int count)
+        {
+            var read = _database.StreamReadGroupAsync(_streamKey, GroupName, ConsumerName, position, count);
+            pendingTasks = read;
+            return await read;
+        }
+
+        private async Task<List<IBatchContainer>> ToBatchesAsync(StreamEntry[] entries)
+        {
+            var batches = new List<IBatchContainer>(entries.Length);
+            List<RedisValue>? unreadable = null;
+            foreach (var entry in entries)
+            {
+                try
+                {
+                    batches.Add(new RedisStreamBatchContainer(entry));
+                }
+                catch (Exception ex) when (ex is ArgumentException or FormatException or OverflowException)
+                {
+                    // Entries deleted while still pending come back with no fields. Either way this entry can never
+                    // be delivered, and leaving it pending would keep it (and everything read with it) stuck.
+                    _logger.LogError(ex, "Acknowledging unreadable entry {EntryId} in stream {QueueId} without delivering it", entry.Id, _queueId);
+                    (unreadable ??= []).Add(entry.Id);
+                }
+            }
+
+            if (unreadable is not null)
+            {
+                try
+                {
+                    await _database.StreamAcknowledgeAsync(_streamKey, GroupName, [.. unreadable]);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error acknowledging unreadable entries in stream {QueueId}", _queueId);
+                    _failedAcknowledgements.AddRange(unreadable);
+                }
+            }
+
+            return batches;
         }
 
         public virtual async Task TrimStreamIfNeeded()
         {
-            // Changed: Use _timeProvider.GetUtcNow() and options for trim parameters
-            if (_timeProvider.GetUtcNow() - _lastTrimTime > TimeSpan.FromMinutes(_receiverOptions.TrimTimeMinutes))
+            var now = _timeProvider.GetUtcNow();
+            if (now - _lastTrimTime > TimeSpan.FromMinutes(_receiverOptions.TrimTimeMinutes))
             {
+                // Recorded before the attempt, so a trim that keeps failing (e.g. a command the server does not support)
+                // is retried once per interval rather than on every poll.
+                _lastTrimTime = now;
                 try
                 {
-                    var trim = await _database.StreamTrimAsync(_queueId.ToString(), _receiverOptions.MaxStreamLength, useApproximateMaxLength: true);
-                    _lastTrimTime = _timeProvider.GetUtcNow();
-                    _logger.LogDebug("Trimmed stream {QueueId} to {MaxStreamLength} entries at {Time}", _queueId, _receiverOptions.MaxStreamLength, _lastTrimTime);
+                    var trimmed = _receiverOptions.TrimStrategy == RedisStreamTrimStrategy.MaxLength
+                        ? await _database.StreamTrimAsync(_streamKey, _receiverOptions.MaxStreamLength, useApproximateMaxLength: true)
+                        : await TrimAcknowledgedEntriesAsync();
+                    _logger.LogDebug("Trimmed {Count} entries from stream {QueueId} using {TrimStrategy} at {Time}", trimmed, _queueId, _receiverOptions.TrimStrategy, _lastTrimTime);
+                }
+                catch (RedisServerException ex) when (_receiverOptions.TrimStrategy == RedisStreamTrimStrategy.AcknowledgedOnly
+                                                      && ex.Message.Contains("syntax", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Redis before 6.2 does not know XTRIM ... MINID and answers with a syntax error.
+                    _logger.LogError(ex,
+                        "Error trimming stream {QueueId}: the AcknowledgedOnly trim strategy needs Redis 6.2 or later. On older servers set RedisStreamReceiverOptions.TrimStrategy = RedisStreamTrimStrategy.MaxLength",
+                        _queueId);
                 }
                 catch (Exception ex)
                 {
@@ -84,38 +189,116 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             }
         }
 
+        private async Task<long> TrimAcknowledgedEntriesAsync()
+        {
+            string? lastDeliveredId = null;
+            foreach (var group in await _database.StreamGroupInfoAsync(_streamKey))
+            {
+                if (group.Name == GroupName)
+                {
+                    lastDeliveredId = group.LastDeliveredId;
+                }
+            }
+
+            var pending = await _database.StreamPendingAsync(_streamKey, GroupName);
+            var minId = GetAcknowledgedTrimId(lastDeliveredId, pending.PendingMessageCount, pending.LowestPendingMessageId);
+            // Without LIMIT, approximate trimming stops after 100 * stream-node-max-entries (10,000 by default) entries.
+            // MINID needs Redis 6.2, which also supports LIMIT.
+            var trimmed = minId is { } id
+                ? await _database.StreamTrimByMinIdAsync(_streamKey, id, useApproximateMaxLength: true, limit: long.MaxValue)
+                : 0;
+
+            var remaining = await _database.StreamLengthAsync(_streamKey);
+            if (remaining > _receiverOptions.MaxStreamLength)
+            {
+                _logger.LogWarning(
+                    "Stream {QueueId} still holds {Remaining} entries after trimming, more than MaxStreamLength {MaxStreamLength}; consumers may be falling behind",
+                    _queueId, remaining, _receiverOptions.MaxStreamLength);
+            }
+
+            return trimmed;
+        }
+
+        /// <summary>
+        /// Returns the id below which every entry has been delivered and acknowledged, or null when nothing is safe to trim.
+        /// Entries up to the group's last-delivered id were delivered; those not in the pending list were acknowledged.
+        /// </summary>
+        internal static RedisValue? GetAcknowledgedTrimId(string? lastDeliveredId, long pendingCount, RedisValue lowestPendingId)
+        {
+            if (pendingCount > 0)
+            {
+                return lowestPendingId;
+            }
+
+            if (string.IsNullOrEmpty(lastDeliveredId) || lastDeliveredId == "0-0")
+            {
+                return null;
+            }
+
+            return lastDeliveredId;
+        }
+
         public async Task Initialize(TimeSpan timeout)
         {
             try
             {
-                var task = _database.StreamCreateConsumerGroupAsync(_queueId.ToString(), "consumer", "$", true);
-                await task.WaitAsync(timeout);
+                await EnsureConsumerGroupAsync().WaitAsync(timeout);
             }
-            catch (Exception ex) when (ex.Message.Contains("name already exists")) { }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error initializing stream {QueueId}", _queueId);
             }
         }
 
-        public async Task MessagesDeliveredAsync(IList<IBatchContainer> messages)
+        // Starts at "0" rather than "$" so entries published before the group existed are delivered, not skipped.
+        private async Task EnsureConsumerGroupAsync()
         {
             try
             {
-                foreach (var message in messages)
-                {
-                    var container = message as RedisStreamBatchContainer;
-                    if (container != null)
-                    {
-                        var ack = _database.StreamAcknowledgeAsync(_queueId.ToString(), "consumer", container.StreamEntryId);
-                        pendingTasks = ack;
-                        await ack;
-                    }
-                }
+                await _database.StreamCreateConsumerGroupAsync(_streamKey, GroupName, "0", createStream: true);
+            }
+            catch (RedisServerException ex) when (ex.Message.StartsWith("BUSYGROUP", StringComparison.Ordinal))
+            {
+                // The group already exists, which is the normal case on every start after the first.
+            }
+        }
+
+        private async Task TryRecreateConsumerGroupAsync()
+        {
+            try
+            {
+                await EnsureConsumerGroupAsync();
+                _pendingCursor = "0";
+                _drainingPending = true;
+                // Ids from the lost stream say nothing about the new one, whose ids can even be lower.
+                _lastReturnedId = RedisValue.Null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error recreating consumer group for stream {QueueId}", _queueId);
+            }
+        }
+
+        public async Task MessagesDeliveredAsync(IList<IBatchContainer> messages)
+        {
+            var delivered = messages.OfType<RedisStreamBatchContainer>().Select(m => (RedisValue)m.StreamEntryId).ToArray();
+            RedisValue[] ids = [.. _failedAcknowledgements, .. delivered];
+            if (ids.Length == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                var ack = _database.StreamAcknowledgeAsync(_streamKey, GroupName, ids);
+                pendingTasks = ack;
+                await ack;
+                _failedAcknowledgements.Clear();
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error acknowledging messages in stream {QueueId}", _queueId);
+                _failedAcknowledgements.AddRange(delivered);
             }
             finally
             {

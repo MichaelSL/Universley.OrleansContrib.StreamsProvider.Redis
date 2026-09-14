@@ -49,7 +49,7 @@ namespace RedisStreamsProvider.UnitTests
         }
 
         [Fact]
-        public async Task QueueMessageBatchAsync_ShouldLogError_OnException()
+        public async Task QueueMessageBatchAsync_ShouldLogAndRethrow_OnException()
         {
             // Arrange
             var streamId = StreamId.Create("namespace", "key");
@@ -60,16 +60,17 @@ namespace RedisStreamsProvider.UnitTests
             var mockLoggerFactory = new Mock<ILoggerFactory>();
             var mockLogger = new Mock<ILogger<RedisStreamAdapter>>();
             var mockReceiverOptions = new Mock<IOptions<RedisStreamReceiverOptions>>();
-            mockReceiverOptions.Setup(o => o.Value).Returns(new RedisStreamReceiverOptions()); // Provide default options
+            mockReceiverOptions.Setup(o => o.Value).Returns(new RedisStreamReceiverOptions());
             mockLoggerFactory.Setup(factory => factory.CreateLogger(It.IsAny<string>())).Returns(mockLogger.Object);
             var adapter = new RedisStreamAdapter(mockDatabase.Object, "TestProvider", _mockQueueMapper.Object, mockLoggerFactory.Object, mockReceiverOptions.Object);
             mockDatabase.Setup(db => db.StreamAddAsync(It.IsAny<RedisKey>(), It.IsAny<NameValueEntry[]>(), It.IsAny<RedisValue?>(), It.IsAny<long?>(), It.IsAny<bool>(), It.IsAny<long?>(), It.IsAny<StreamTrimMode>(), It.IsAny<CommandFlags>()))
                 .ThrowsAsync(new Exception("Test exception"));
 
             // Act
-            await adapter.QueueMessageBatchAsync(streamId, events, token, requestContext);
+            var thrown = await Assert.ThrowsAsync<Exception>(() => adapter.QueueMessageBatchAsync(streamId, events, token, requestContext));
 
             // Assert
+            Assert.Equal("Test exception", thrown.Message);
             mockLogger.Verify(
                 logger => logger.Log(
                     It.Is<LogLevel>(logLevel => logLevel == LogLevel.Error),

@@ -54,10 +54,15 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
 
         }
 
-        public Task<IQueueAdapter> CreateAdapter()
+        public async Task<IQueueAdapter> CreateAdapter()
         {
-            // Pass receiver options to RedisStreamAdapter
-            return Task.FromResult<IQueueAdapter>(new RedisStreamAdapter(_connectionMultiplexer.GetDatabase(), _providerName, _hashRingBasedStreamQueueMapper, _loggerFactory, _receiverOptions));
+            var minIdTrimSupport = new MinIdTrimSupport();
+            if (_receiverOptions.Value.TrimStrategy == RedisStreamTrimStrategy.Auto)
+            {
+                await minIdTrimSupport.DetectAsync(_connectionMultiplexer, _loggerFactory.CreateLogger<RedisStreamFactory>());
+            }
+
+            return new RedisStreamAdapter(_connectionMultiplexer.GetDatabase(), _providerName, _hashRingBasedStreamQueueMapper, _loggerFactory, _receiverOptions, minIdTrimSupport);
         }
 
         public Task<IStreamFailureHandler> GetDeliveryFailureHandler(QueueId queueId)

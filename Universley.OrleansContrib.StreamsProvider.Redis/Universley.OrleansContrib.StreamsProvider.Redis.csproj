@@ -6,6 +6,7 @@
 		<Nullable>enable</Nullable>
 		<AnalysisLevel>latest-recommended</AnalysisLevel>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<PackageReleaseNotes>Production hardening. Trimming defaults to the new TrimStrategy.Auto: on Redis 6.2+ only acknowledged entries are trimmed and MaxStreamLength is ignored; on older servers the MaxStreamLength cap stays and a warning is logged. Failed publishes now throw from OnNextAsync. Events stuck in pending lists by earlier versions are delivered. Fixes lost and stuck events on unreadable entries, restarts, queue handoffs and lost stream keys. Full notes and upgrade guidance: https://github.com/MichaelSL/Universley.OrleansContrib.StreamsProvider.Redis/blob/main/CHANGELOG.md</PackageReleaseNotes>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -16,6 +17,11 @@
 
 	<ItemGroup>
 		<None Include="..\README.md" Pack="true" PackagePath="\" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<InternalsVisibleTo Include="RedisStreamsProvider.UnitTests" />
+		<InternalsVisibleTo Include="RedisStreamsProvider.IntegrationTests" />
 	</ItemGroup>
 
 </Project>

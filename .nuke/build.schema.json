@@ -119,16 +119,6 @@
           "type": "string",
           "description": "Gitea Nuget package source name"
         },
-        "GiteaPackageOwnerPassword": {
-          "type": "string",
-          "description": "Gitea package owner password",
-          "default": "Secrets must be entered via 'nuke :secrets [profile]'"
-        },
-        "GiteaPackageOwnerUser": {
-          "type": "string",
-          "description": "Gitea package owner user",
-          "default": "Secrets must be entered via 'nuke :secrets [profile]'"
-        },
         "NuGetApiKey": {
           "type": "string",
           "description": "NuGet API key"

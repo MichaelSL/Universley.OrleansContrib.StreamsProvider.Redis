@@ -1,121 +1,200 @@
 ﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Orleans.Streams;
 using StackExchange.Redis;
-using System; // Added for TimeProvider
-using Microsoft.Extensions.Options; // Added for IOptions
 
 namespace Universley.OrleansContrib.StreamsProvider.Redis
 {
     public class RedisStreamReceiver : IQueueAdapterReceiver
     {
+        private const string NewMessages = ">";
+        private const int MaxReadCount = 1000;
+
         private readonly QueueId _queueId;
+        // The stream key, which is also the consumer name.
+        private readonly string _streamKey;
         private readonly IDatabase _database;
         private readonly ILogger<RedisStreamReceiver> _logger;
-        private string _lastId = "0";
+        private readonly RedisStreamReceiverOptions _receiverOptions;
+        private RedisStreamTrimmer _trimmer;
+        // The newest entry handed to Orleans (or acknowledged as unreadable). Reads return ids in ascending order and
+        // each read starts past the previous one, so every entry this consumer has read and not handed on is newer.
+        private RedisValue _lastReturnedId = "0";
+        // While catching up, reads walk this consumer's pending list from _lastReturnedId instead of asking for new
+        // messages: on start, to redeliver what a previous owner never acknowledged, and after a failed read.
+        private bool _catchingUp = true;
+        // Entries whose XACK failed. They stay pending in Redis, so they are sent again with the next acknowledgement
+        // (XACK is idempotent); otherwise nothing would acknowledge them before the next restart or queue handoff.
+        private readonly List<RedisValue> _unacknowledged = [];
         private Task? pendingTasks;
-        private DateTimeOffset _lastTrimTime;
 
-        private TimeProvider _timeProvider;
-        private readonly RedisStreamReceiverOptions _receiverOptions; // Added options field
-
-        // Changed: Constructor to accept TimeProvider and IOptions<RedisStreamReceiverOptions>
-        public RedisStreamReceiver(QueueId queueId, 
-                                 IDatabase database, 
-                                 ILogger<RedisStreamReceiver> logger, 
-                                 TimeProvider? timeProvider = null, 
+        public RedisStreamReceiver(QueueId queueId,
+                                 IDatabase database,
+                                 ILogger<RedisStreamReceiver> logger,
+                                 TimeProvider? timeProvider = null,
                                  IOptions<RedisStreamReceiverOptions>? receiverOptions = null)
         {
             _queueId = queueId;
+            _streamKey = RedisStreamWireFormat.StreamKey(queueId);
             _database = database ?? throw new ArgumentNullException(nameof(database));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _timeProvider = timeProvider ?? TimeProvider.System;
-            _receiverOptions = receiverOptions?.Value ?? new RedisStreamReceiverOptions(); // Use provided options or default
-            _lastTrimTime = _timeProvider.GetUtcNow(); 
+            _receiverOptions = receiverOptions?.Value ?? new RedisStreamReceiverOptions();
+            _trimmer = CreateTrimmer(timeProvider ?? TimeProvider.System);
         }
 
-        // This method might be less relevant if options are passed via constructor, 
-        // but kept for now if direct TimeProvider manipulation is still needed for some tests.
+        /// <summary>Replaces the time provider; the next trim is due one full interval from now.</summary>
         public void SetTimeProvider(TimeProvider timeProvider)
         {
-            _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
-            _lastTrimTime = _timeProvider.GetUtcNow();
+            _trimmer = CreateTrimmer(timeProvider ?? throw new ArgumentNullException(nameof(timeProvider)));
         }
+
+        private RedisStreamTrimmer CreateTrimmer(TimeProvider timeProvider) =>
+            new(_queueId, _database, _logger, timeProvider, _receiverOptions);
 
         public async Task<IList<IBatchContainer>?> GetQueueMessagesAsync(int maxCount)
         {
             try
             {
-                var events = _database.StreamReadGroupAsync(_queueId.ToString(), "consumer", _queueId.ToString(), _lastId, maxCount);
-                pendingTasks = events;
-                _lastId = ">";
-                var batches = (await events).Select(e => new RedisStreamBatchContainer(e)).ToList<IBatchContainer>();
+                var entries = await ReadEntriesAsync(maxCount is > 0 and < MaxReadCount ? maxCount : MaxReadCount);
+                var batches = ToBatches(entries, out var unreadable);
+                await AcknowledgeAsync(unreadable);
                 await TrimStreamIfNeeded();
 
+                if (entries.Length > 0)
+                {
+                    _lastReturnedId = entries[^1].Id;
+                }
+
                 return batches;
+            }
+            catch (RedisServerException ex) when (ex.Message.StartsWith("NOGROUP", StringComparison.Ordinal))
+            {
+                // The stream key (and with it the group) is gone. Without this every later read would fail forever.
+                _logger.LogWarning(ex, "Consumer group for stream {QueueId} is missing, recreating it", _queueId);
+                await TryRecreateConsumerGroupAsync();
+                return [];
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error reading from stream {QueueId}", _queueId);
+                // The read may have failed after Redis had already moved entries to this consumer's pending list
+                // (a timeout or dropped connection loses the reply). Catching up delivers those entries now rather
+                // than after the next restart or queue handoff.
+                _catchingUp = true;
                 return default;
             }
-            finally
-            {
-                pendingTasks = null;
-            }
-
-
         }
 
-        public virtual async Task TrimStreamIfNeeded()
+        private async Task<StreamEntry[]> ReadEntriesAsync(int count)
         {
-            // Changed: Use _timeProvider.GetUtcNow() and options for trim parameters
-            if (_timeProvider.GetUtcNow() - _lastTrimTime > TimeSpan.FromMinutes(_receiverOptions.TrimTimeMinutes))
+            if (_catchingUp)
+            {
+                var pending = await TrackAsync(_database.StreamReadGroupAsync(_streamKey, RedisStreamWireFormat.GroupName, _streamKey, _lastReturnedId, count));
+                if (pending.Length > 0)
+                {
+                    return pending;
+                }
+
+                _catchingUp = false;
+            }
+
+            return await TrackAsync(_database.StreamReadGroupAsync(_streamKey, RedisStreamWireFormat.GroupName, _streamKey, NewMessages, count));
+        }
+
+        private List<IBatchContainer> ToBatches(StreamEntry[] entries, out List<RedisValue> unreadable)
+        {
+            var batches = new List<IBatchContainer>(entries.Length);
+            unreadable = [];
+            foreach (var entry in entries)
             {
                 try
                 {
-                    var trim = await _database.StreamTrimAsync(_queueId.ToString(), _receiverOptions.MaxStreamLength, useApproximateMaxLength: true);
-                    _lastTrimTime = _timeProvider.GetUtcNow();
-                    _logger.LogDebug("Trimmed stream {QueueId} to {MaxStreamLength} entries at {Time}", _queueId, _receiverOptions.MaxStreamLength, _lastTrimTime);
+                    batches.Add(new RedisStreamBatchContainer(entry));
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is ArgumentException or FormatException or OverflowException)
                 {
-                    _logger.LogError(ex, "Error trimming stream {QueueId}", _queueId);
+                    // Entries deleted while still pending come back with no fields. Either way this entry can never
+                    // be delivered, and leaving it pending would keep it (and everything read with it) stuck.
+                    _logger.LogError(ex, "Acknowledging unreadable entry {EntryId} in stream {QueueId} without delivering it", entry.Id, _queueId);
+                    unreadable.Add(entry.Id);
                 }
             }
+
+            return batches;
         }
+
+        public virtual Task TrimStreamIfNeeded() => _trimmer.TrimIfDueAsync();
 
         public async Task Initialize(TimeSpan timeout)
         {
             try
             {
-                var task = _database.StreamCreateConsumerGroupAsync(_queueId.ToString(), "consumer", "$", true);
-                await task.WaitAsync(timeout);
+                await EnsureConsumerGroupAsync().WaitAsync(timeout);
             }
-            catch (Exception ex) when (ex.Message.Contains("name already exists")) { }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error initializing stream {QueueId}", _queueId);
             }
         }
 
-        public async Task MessagesDeliveredAsync(IList<IBatchContainer> messages)
+        // Starts at "0" rather than "$" so entries published before the group existed are delivered, not skipped.
+        private async Task EnsureConsumerGroupAsync()
         {
             try
             {
-                foreach (var message in messages)
-                {
-                    var container = message as RedisStreamBatchContainer;
-                    if (container != null)
-                    {
-                        var ack = _database.StreamAcknowledgeAsync(_queueId.ToString(), "consumer", container.StreamEntryId);
-                        pendingTasks = ack;
-                        await ack;
-                    }
-                }
+                await _database.StreamCreateConsumerGroupAsync(_streamKey, RedisStreamWireFormat.GroupName, "0", createStream: true);
+            }
+            catch (RedisServerException ex) when (ex.Message.StartsWith("BUSYGROUP", StringComparison.Ordinal))
+            {
+                // The group already exists, which is the normal case on every start after the first.
+            }
+        }
+
+        private async Task TryRecreateConsumerGroupAsync()
+        {
+            try
+            {
+                await EnsureConsumerGroupAsync();
+                // Ids from the lost stream say nothing about the new one, whose ids can even be lower.
+                _lastReturnedId = "0";
+                _catchingUp = true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error recreating consumer group for stream {QueueId}", _queueId);
+            }
+        }
+
+        public Task MessagesDeliveredAsync(IList<IBatchContainer> messages) =>
+            AcknowledgeAsync(messages.OfType<RedisStreamBatchContainer>().Select(m => (RedisValue)m.StreamEntryId).ToList());
+
+        /// <summary>Acknowledges <paramref name="ids"/> together with every earlier id whose acknowledgement failed.</summary>
+        private async Task AcknowledgeAsync(List<RedisValue> ids)
+        {
+            if (ids.Count == 0)
+            {
+                return;
+            }
+
+            _unacknowledged.AddRange(ids);
+            try
+            {
+                await TrackAsync(_database.StreamAcknowledgeAsync(_streamKey, RedisStreamWireFormat.GroupName, [.. _unacknowledged]));
+                _unacknowledged.Clear();
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error acknowledging messages in stream {QueueId}", _queueId);
+            }
+        }
+
+        // Shutdown waits for the Redis call in flight.
+        private async Task<T> TrackAsync<T>(Task<T> call)
+        {
+            pendingTasks = call;
+            try
+            {
+                return await call;
             }
             finally
             {

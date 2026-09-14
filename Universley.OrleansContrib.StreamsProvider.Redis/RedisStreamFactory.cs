@@ -46,18 +46,20 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             var loggerFactory = provider.GetRequiredService<ILoggerFactory>();
             var simpleQueueCacheOptions = provider.GetOptionsByName<SimpleQueueCacheOptions>(providerName);
             var hashRingStreamQueueMapperOptions = provider.GetOptionsByName<HashRingStreamQueueMapperOptions>(providerName);
-            var receiverOptionsInstance = provider.GetOptionsByName<RedisStreamReceiverOptions>(providerName); // Renamed for clarity, this is TOptions, not IOptions<TOptions>
-            // Options.Create needs the actual options instance. GetOptionsByName returns a non-null instance.
-            IOptions<RedisStreamReceiverOptions> ioptionsReceiverOptions = Options.Create(receiverOptionsInstance);
+            var receiverOptions = Options.Create(provider.GetOptionsByName<RedisStreamReceiverOptions>(providerName));
             var streamFailureHandler = new RedisStreamFailureHandler(loggerFactory.CreateLogger<RedisStreamFailureHandler>());
-            return new RedisStreamFactory(connMuliplexer, loggerFactory, providerName, streamFailureHandler, simpleQueueCacheOptions, hashRingStreamQueueMapperOptions, ioptionsReceiverOptions);
-
+            return new RedisStreamFactory(connMuliplexer, loggerFactory, providerName, streamFailureHandler, simpleQueueCacheOptions, hashRingStreamQueueMapperOptions, receiverOptions);
         }
 
-        public Task<IQueueAdapter> CreateAdapter()
+        public async Task<IQueueAdapter> CreateAdapter()
         {
-            // Pass receiver options to RedisStreamAdapter
-            return Task.FromResult<IQueueAdapter>(new RedisStreamAdapter(_connectionMultiplexer.GetDatabase(), _providerName, _hashRingBasedStreamQueueMapper, _loggerFactory, _receiverOptions));
+            var minIdTrimSupport = new MinIdTrimSupport();
+            if (_receiverOptions.Value.TrimStrategy == RedisStreamTrimStrategy.Auto)
+            {
+                await minIdTrimSupport.DetectAsync(_connectionMultiplexer, _loggerFactory.CreateLogger<RedisStreamFactory>());
+            }
+
+            return new RedisStreamAdapter(_connectionMultiplexer.GetDatabase(), _providerName, _hashRingBasedStreamQueueMapper, _loggerFactory, _receiverOptions, minIdTrimSupport);
         }
 
         public Task<IStreamFailureHandler> GetDeliveryFailureHandler(QueueId queueId)

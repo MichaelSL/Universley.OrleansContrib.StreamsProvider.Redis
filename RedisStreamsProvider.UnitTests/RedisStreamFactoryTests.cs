@@ -57,6 +57,21 @@ namespace RedisStreamsProvider.UnitTests
             Assert.IsType<RedisStreamAdapter>(adapter);
         }
 
+        [Theory]
+        [InlineData(RedisStreamTrimStrategy.Auto, 1)]
+        [InlineData(RedisStreamTrimStrategy.AcknowledgedOnly, 0)]
+        [InlineData(RedisStreamTrimStrategy.MaxLength, 0)]
+        public async Task CreateAdapter_ProbesTheServerVersion_OnlyForTheAutoTrimStrategy(RedisStreamTrimStrategy strategy, int expectedProbes)
+        {
+            _mockConnectionMultiplexer.Setup(m => m.GetServers()).Returns([]);
+            var options = Options.Create(new RedisStreamReceiverOptions { TrimStrategy = strategy });
+            var factory = new RedisStreamFactory(_mockConnectionMultiplexer.Object, _mockLoggerFactory.Object, _providerName, _mockStreamFailureHandler.Object, _simpleQueueCacheOptions, _hashRingStreamQueueMapperOptions, options);
+
+            await factory.CreateAdapter();
+
+            _mockConnectionMultiplexer.Verify(m => m.GetServers(), Times.Exactly(expectedProbes));
+        }
+
         [Fact]
         public async Task GetDeliveryFailureHandler_ShouldReturnStreamFailureHandler()
         {

@@ -1,4 +1,4 @@
-using Moq;
+﻿using Moq;
 using StackExchange.Redis;
 using Microsoft.Extensions.Logging;
 using Orleans.Streams;
@@ -49,35 +49,56 @@ namespace RedisStreamsProvider.UnitTests
         }
 
         [Fact]
-        public async Task QueueMessageBatchAsync_ShouldLogError_OnException()
+        public async Task QueueMessageBatchAsync_AddsAllEventsToTheQueuesStreamInOneTransaction()
         {
             // Arrange
             var streamId = StreamId.Create("namespace", "key");
-            var events = new List<string> { "event1", "event2" };
-            var token = new RedisStreamSequenceToken(123, 456);
-            var requestContext = new Dictionary<string, object>();
-            var mockDatabase = new Mock<IDatabase>();
-            var mockLoggerFactory = new Mock<ILoggerFactory>();
-            var mockLogger = new Mock<ILogger<RedisStreamAdapter>>();
-            var mockReceiverOptions = new Mock<IOptions<RedisStreamReceiverOptions>>();
-            mockReceiverOptions.Setup(o => o.Value).Returns(new RedisStreamReceiverOptions()); // Provide default options
-            mockLoggerFactory.Setup(factory => factory.CreateLogger(It.IsAny<string>())).Returns(mockLogger.Object);
-            var adapter = new RedisStreamAdapter(mockDatabase.Object, "TestProvider", _mockQueueMapper.Object, mockLoggerFactory.Object, mockReceiverOptions.Object);
-            mockDatabase.Setup(db => db.StreamAddAsync(It.IsAny<RedisKey>(), It.IsAny<NameValueEntry[]>(), It.IsAny<RedisValue?>(), It.IsAny<long?>(), It.IsAny<bool>(), It.IsAny<long?>(), It.IsAny<StreamTrimMode>(), It.IsAny<CommandFlags>()))
-                .ThrowsAsync(new Exception("Test exception"));
+            var streamKey = RedisStreamWireFormat.StreamKey(_mockQueueMapper.Object.GetQueueForStream(streamId));
+            var transaction = new Mock<ITransaction>();
+            transaction.Setup(t => t.ExecuteAsync(It.IsAny<CommandFlags>())).ReturnsAsync(true);
+            _mockDatabase.Setup(db => db.CreateTransaction(It.IsAny<object>())).Returns(transaction.Object);
 
             // Act
-            await adapter.QueueMessageBatchAsync(streamId, events, token, requestContext);
+            await _adapter.QueueMessageBatchAsync(streamId, new List<string> { "event1", "event2" }, null!, []);
 
             // Assert
-            mockLogger.Verify(
-                logger => logger.Log(
-                    It.Is<LogLevel>(logLevel => logLevel == LogLevel.Error),
-                    It.IsAny<EventId>(),
-                    It.Is<It.IsAnyType>((v, t) => v != null && v.ToString()!.Contains("Error adding event to stream")),
-                    It.IsAny<Exception>(),
-                    It.Is<Func<It.IsAnyType, Exception?, string>>((v, t) => true)),
-                Times.Once);
+            transaction.Verify(t => t.StreamAddAsync(streamKey, It.IsAny<NameValueEntry[]>(), It.IsAny<RedisValue?>(), It.IsAny<long?>(),
+                It.IsAny<bool>(), It.IsAny<long?>(), It.IsAny<StreamTrimMode>(), It.IsAny<CommandFlags>()), Times.Exactly(2));
+            transaction.Verify(t => t.ExecuteAsync(It.IsAny<CommandFlags>()), Times.Once);
+            _mockDatabase.Verify(db => db.StreamAddAsync(It.IsAny<RedisKey>(), It.IsAny<NameValueEntry[]>(), It.IsAny<RedisValue?>(), It.IsAny<long?>(),
+                It.IsAny<bool>(), It.IsAny<long?>(), It.IsAny<StreamTrimMode>(), It.IsAny<CommandFlags>()), Times.Never);
+        }
+
+        [Fact]
+        public async Task QueueMessageBatchAsync_ShouldLogAndRethrow_OnException()
+        {
+            // Arrange
+            var streamId = StreamId.Create("namespace", "key");
+            var transaction = new Mock<ITransaction>();
+            transaction.Setup(t => t.ExecuteAsync(It.IsAny<CommandFlags>())).ThrowsAsync(new Exception("Test exception"));
+            _mockDatabase.Setup(db => db.CreateTransaction(It.IsAny<object>())).Returns(transaction.Object);
+
+            // Act
+            var thrown = await Assert.ThrowsAsync<Exception>(() => _adapter.QueueMessageBatchAsync(streamId, new List<string> { "event1", "event2" }, null!, []));
+
+            // Assert
+            Assert.Equal("Test exception", thrown.Message);
+            _mockLogger.VerifyLogged(LogLevel.Error, "Error adding event to stream", Times.Once());
+        }
+
+        [Fact]
+        public async Task QueueMessageBatchAsync_Throws_WhenOneOfTheQueuedAddsFails()
+        {
+            // Arrange: EXEC succeeds, but Redis rejected one command inside it.
+            var transaction = new Mock<ITransaction>();
+            transaction.Setup(t => t.ExecuteAsync(It.IsAny<CommandFlags>())).ReturnsAsync(true);
+            transaction.Setup(t => t.StreamAddAsync(It.IsAny<RedisKey>(), It.IsAny<NameValueEntry[]>(), It.IsAny<RedisValue?>(), It.IsAny<long?>(),
+                    It.IsAny<bool>(), It.IsAny<long?>(), It.IsAny<StreamTrimMode>(), It.IsAny<CommandFlags>()))
+                .ThrowsAsync(new RedisServerException("WRONGTYPE Operation against a key holding the wrong kind of value"));
+            _mockDatabase.Setup(db => db.CreateTransaction(It.IsAny<object>())).Returns(transaction.Object);
+
+            // Act & Assert
+            await Assert.ThrowsAsync<RedisServerException>(() => _adapter.QueueMessageBatchAsync(StreamId.Create("namespace", "key"), new List<string> { "event1" }, null!, []));
         }
     }
 }

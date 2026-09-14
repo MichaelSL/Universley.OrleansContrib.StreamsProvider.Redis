@@ -23,37 +23,30 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         [Id(4)]
         public string StreamEntryId { get; }
         
+        /// <exception cref="ArgumentException"><paramref name="streamEntry"/> was not written by this provider.</exception>
         public RedisStreamBatchContainer(StreamEntry streamEntry)
         {
-            var streamNamespace = (string?)streamEntry["streamNamespace"];
-            var steamKey = (string?)streamEntry["streamKey"];
-            var eventType = (string?)streamEntry["eventType"];
-            var data = (string?)streamEntry["data"];
-            StreamEntryId = streamEntry.Id.ToString() ?? throw new ArgumentNullException(nameof(streamEntry.Id));
-            
-            // Check incoming data
-            if (string.IsNullOrWhiteSpace(streamNamespace))
+            if (!RedisStreamWireFormat.TryDecode(streamEntry, out var decoded))
             {
-                throw new ArgumentNullException(nameof(streamNamespace));
+                throw new ArgumentException($"Stream entry {streamEntry.Id} is not an event written by this provider", nameof(streamEntry));
             }
-            if (string.IsNullOrWhiteSpace(steamKey))
-            {
-                throw new ArgumentNullException(nameof(steamKey));
-            }
-            if (string.IsNullOrWhiteSpace(eventType))
-            {
-                throw new ArgumentNullException(nameof(eventType));
-            }
-            if (string.IsNullOrWhiteSpace(data))
-            {
-                throw new ArgumentNullException(nameof(data));
-            }
-            
-            StreamId = StreamId.Create(streamNamespace, steamKey);
-            SequenceToken = new RedisStreamSequenceToken(streamEntry.Id);
-            EventType = eventType!;
-            Data = data!;
+
+            StreamId = decoded.StreamId;
+            SequenceToken = decoded.SequenceToken;
+            EventType = decoded.EventType;
+            Data = decoded.Data;
+            StreamEntryId = decoded.StreamEntryId;
         }
+
+        internal RedisStreamBatchContainer(StreamId streamId, RedisStreamSequenceToken sequenceToken, string eventType, string data, string streamEntryId)
+        {
+            StreamId = streamId;
+            SequenceToken = sequenceToken;
+            EventType = eventType;
+            Data = data;
+            StreamEntryId = streamEntryId;
+        }
+
         public IEnumerable<Tuple<T, StreamSequenceToken>> GetEvents<T>()
         {
             List<Tuple<T, StreamSequenceToken>> events = new();

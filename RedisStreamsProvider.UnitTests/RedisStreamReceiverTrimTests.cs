@@ -24,10 +24,22 @@ namespace RedisStreamsProvider.UnitTests
             _receiver = CreateReceiver(_receiverOptions);
         }
 
-        private RedisStreamReceiver CreateReceiver(RedisStreamReceiverOptions options) =>
-            new(_queueId, _mockDatabase.Object, _mockLogger.Object, _fakeTimeProvider, Options.Create(options));
+        private RedisStreamReceiver CreateReceiver(RedisStreamReceiverOptions options, MinIdTrimSupport? minIdTrimSupport = null) =>
+            new(_queueId, _mockDatabase.Object, _mockLogger.Object, _fakeTimeProvider, Options.Create(options), minIdTrimSupport ?? new MinIdTrimSupport());
+
+        private static RedisStreamReceiverOptions AutoOptions() =>
+            new() { TrimTimeMinutes = 1, MaxStreamLength = 128, TrimStrategy = RedisStreamTrimStrategy.Auto };
 
         private void AdvancePastTrimInterval() => _fakeTimeProvider.Advance(TimeSpan.FromMinutes(_receiverOptions.TrimTimeMinutes + 1));
+
+        private ISetup<IDatabase, Task<long>> SetupMinIdTrim() =>
+            _mockDatabase.Setup(db => db.StreamTrimByMinIdAsync(
+                It.IsAny<RedisKey>(), It.IsAny<RedisValue>(), It.IsAny<bool>(), It.IsAny<long?>(), It.IsAny<StreamTrimMode>(), It.IsAny<CommandFlags>()));
+
+        private void VerifyMinIdTrim(Times times) =>
+            _mockDatabase.Verify(db => db.StreamTrimByMinIdAsync(
+                    It.IsAny<RedisKey>(), It.IsAny<RedisValue>(), It.IsAny<bool>(), It.IsAny<long?>(), It.IsAny<StreamTrimMode>(), It.IsAny<CommandFlags>()),
+                times);
 
         private ISetup<IDatabase, Task<long>> SetupMaxLengthTrim() =>
             _mockDatabase.Setup(db => db.StreamTrimAsync(
@@ -124,18 +136,73 @@ namespace RedisStreamsProvider.UnitTests
             // Arrange: Redis before 6.2 answers XTRIM ... MINID with a syntax error.
             var receiver = CreateReceiver(new RedisStreamReceiverOptions { TrimTimeMinutes = 1, TrimStrategy = RedisStreamTrimStrategy.AcknowledgedOnly });
             AdvancePastTrimInterval();
-            _mockDatabase
-                .Setup(db => db.StreamTrimByMinIdAsync(It.IsAny<RedisKey>(), It.IsAny<RedisValue>(), It.IsAny<bool>(), It.IsAny<long?>(), It.IsAny<StreamTrimMode>(), It.IsAny<CommandFlags>()))
-                .ThrowsAsync(new RedisServerException("ERR syntax error"));
+            SetupMinIdTrim().ThrowsAsync(new RedisServerException("ERR syntax error"));
+
+            // Act
+            await receiver.TrimStreamIfNeeded();
+
+            // Assert: an explicit AcknowledgedOnly never falls back to trimming undelivered entries.
+            _mockLogger.VerifyLogged(LogLevel.Error, "Error trimming stream", Times.Once(),
+                ex => ex is NotSupportedException { InnerException: RedisServerException }
+                      && ex.Message.Contains("Redis 6.2")
+                      && ex.Message.Contains("RedisStreamTrimStrategy.MaxLength"));
+            _mockDatabase.Verify(db => db.StreamTrimAsync(
+                It.IsAny<RedisKey>(), It.IsAny<long>(), It.IsAny<bool>(), It.IsAny<long?>(), It.IsAny<StreamTrimMode>(), It.IsAny<CommandFlags>()), Times.Never());
+        }
+
+        [Fact]
+        public async Task TrimStreamIfNeeded_Auto_TrimsAcknowledgedEntries_WhenMinIdIsSupported()
+        {
+            // Arrange
+            var receiver = CreateReceiver(AutoOptions());
+            AdvancePastTrimInterval();
+            SetupMinIdTrim().ReturnsAsync(10);
 
             // Act
             await receiver.TrimStreamIfNeeded();
 
             // Assert
-            _mockLogger.VerifyLogged(LogLevel.Error, "Error trimming stream", Times.Once(),
-                ex => ex is NotSupportedException { InnerException: RedisServerException }
-                      && ex.Message.Contains("Redis 6.2")
-                      && ex.Message.Contains("RedisStreamTrimStrategy.MaxLength"));
+            VerifyMinIdTrim(Times.Once());
+            VerifyMaxLengthTrim(Times.Never());
+        }
+
+        [Fact]
+        public async Task TrimStreamIfNeeded_Auto_FallsBackToMaxLength_WhenMinIdIsASyntaxError()
+        {
+            // Arrange: Redis before 6.2 answers XTRIM ... MINID with a syntax error.
+            var minIdTrimSupport = new MinIdTrimSupport();
+            var receiver = CreateReceiver(AutoOptions(), minIdTrimSupport);
+            AdvancePastTrimInterval();
+            SetupMinIdTrim().ThrowsAsync(new RedisServerException("ERR syntax error"));
+            SetupMaxLengthTrim().ReturnsAsync(10);
+
+            // Act
+            await receiver.TrimStreamIfNeeded();
+
+            // Assert: the same trim falls back, and the fallback is recorded and logged as a warning, not an error.
+            VerifyMaxLengthTrim(Times.Once());
+            Assert.False(minIdTrimSupport.IsSupported);
+            _mockLogger.VerifyLogged(LogLevel.Warning, "falls back to MaxLength", Times.Once(), ex => ex is NotSupportedException);
+            _mockLogger.VerifyLogged(LogLevel.Error, "Error trimming stream", Times.Never());
+        }
+
+        [Fact]
+        public async Task TrimStreamIfNeeded_Auto_SkipsMinId_OnceAnotherReceiverFoundItUnsupported()
+        {
+            // Arrange
+            var minIdTrimSupport = new MinIdTrimSupport();
+            minIdTrimSupport.MarkUnsupported(new Mock<ILogger>().Object);
+            var receiver = CreateReceiver(AutoOptions(), minIdTrimSupport);
+            AdvancePastTrimInterval();
+            SetupMaxLengthTrim().ReturnsAsync(10);
+
+            // Act
+            await receiver.TrimStreamIfNeeded();
+
+            // Assert
+            VerifyMinIdTrim(Times.Never());
+            VerifyMaxLengthTrim(Times.Once());
+            _mockLogger.VerifyLogged(LogLevel.Warning, "falls back to MaxLength", Times.Never());
         }
 
         [Fact]
@@ -170,9 +237,9 @@ namespace RedisStreamsProvider.UnitTests
         }
 
         [Fact]
-        public void TrimStrategy_DefaultsToAcknowledgedOnly()
+        public void TrimStrategy_DefaultsToAuto()
         {
-            Assert.Equal(RedisStreamTrimStrategy.AcknowledgedOnly, new RedisStreamReceiverOptions().TrimStrategy);
+            Assert.Equal(RedisStreamTrimStrategy.Auto, new RedisStreamReceiverOptions().TrimStrategy);
         }
 
         [Fact]

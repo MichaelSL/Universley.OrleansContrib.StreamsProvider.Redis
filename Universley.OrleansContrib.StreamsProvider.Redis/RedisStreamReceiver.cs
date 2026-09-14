@@ -16,6 +16,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         private readonly IDatabase _database;
         private readonly ILogger<RedisStreamReceiver> _logger;
         private readonly RedisStreamReceiverOptions _receiverOptions;
+        private readonly MinIdTrimSupport _minIdTrimSupport;
         private RedisStreamTrimmer _trimmer;
         // The newest entry handed to Orleans (or acknowledged as unreadable). Reads return ids in ascending order and
         // each read starts past the previous one, so every entry this consumer has read and not handed on is newer.
@@ -33,12 +34,23 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
                                  ILogger<RedisStreamReceiver> logger,
                                  TimeProvider? timeProvider = null,
                                  IOptions<RedisStreamReceiverOptions>? receiverOptions = null)
+            : this(queueId, database, logger, timeProvider, receiverOptions, new MinIdTrimSupport())
+        {
+        }
+
+        internal RedisStreamReceiver(QueueId queueId,
+                                   IDatabase database,
+                                   ILogger<RedisStreamReceiver> logger,
+                                   TimeProvider? timeProvider,
+                                   IOptions<RedisStreamReceiverOptions>? receiverOptions,
+                                   MinIdTrimSupport minIdTrimSupport)
         {
             _queueId = queueId;
             _streamKey = RedisStreamWireFormat.StreamKey(queueId);
             _database = database ?? throw new ArgumentNullException(nameof(database));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _receiverOptions = receiverOptions?.Value ?? new RedisStreamReceiverOptions();
+            _minIdTrimSupport = minIdTrimSupport;
             _trimmer = CreateTrimmer(timeProvider ?? TimeProvider.System);
         }
 
@@ -49,7 +61,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         }
 
         private RedisStreamTrimmer CreateTrimmer(TimeProvider timeProvider) =>
-            new(_queueId, _database, _logger, timeProvider, _receiverOptions);
+            new(_queueId, _database, _logger, timeProvider, _receiverOptions, _minIdTrimSupport);
 
         public async Task<IList<IBatchContainer>?> GetQueueMessagesAsync(int maxCount)
         {

@@ -1,8 +1,11 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Time.Testing;
+using Orleans.Configuration;
+using Orleans.Providers.Streams.Common;
 using StackExchange.Redis;
 using Universley.OrleansContrib.StreamsProvider.Redis;
+using MsOptions = Microsoft.Extensions.Options.Options;
 
 namespace RedisStreamsProvider.IntegrationTests;
 
@@ -93,5 +96,19 @@ public sealed class TrimmingTests(RedisFixture redis)
 
         Assert.Contains(logger.Collector.GetSnapshot(),
             r => r.Level == LogLevel.Warning && r.Message.Contains("consumers may be falling behind"));
+    }
+
+    [Fact]
+    public async Task Auto_trimming_startup_probe_keeps_acknowledged_only_trimming_on_Redis_7()
+    {
+        var logs = new FakeLogCollector();
+        using var loggerFactory = LoggerFactory.Create(builder => builder.AddProvider(new FakeLoggerProvider(logs)).SetMinimumLevel(LogLevel.Debug));
+        var factory = new RedisStreamFactory(redis.Connection, loggerFactory, $"it-{Guid.NewGuid():N}", new RedisStreamFailureHandler(loggerFactory.CreateLogger<RedisStreamFailureHandler>()),
+            new SimpleQueueCacheOptions(), new HashRingStreamQueueMapperOptions { TotalQueueCount = 1 }, MsOptions.Create(new RedisStreamReceiverOptions()));
+
+        await factory.CreateAdapter();
+
+        // Neither a fallback nor a probe that could not read the version.
+        Assert.DoesNotContain(logs.GetSnapshot(), r => r.Message.Contains("XTRIM MINID"));
     }
 }

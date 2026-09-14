@@ -13,10 +13,12 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         private readonly ILogger _logger;
         private readonly TimeProvider _timeProvider;
         private readonly RedisStreamReceiverOptions _options;
+        private readonly MinIdTrimSupport _minIdTrimSupport;
         private readonly Func<Task<long>> _trim;
         private DateTimeOffset _lastTrimTime;
 
-        public RedisStreamTrimmer(QueueId queueId, IDatabase database, ILogger logger, TimeProvider timeProvider, RedisStreamReceiverOptions options)
+        public RedisStreamTrimmer(QueueId queueId, IDatabase database, ILogger logger, TimeProvider timeProvider, RedisStreamReceiverOptions options,
+            MinIdTrimSupport minIdTrimSupport)
         {
             _queueId = queueId;
             _streamKey = RedisStreamWireFormat.StreamKey(queueId);
@@ -24,8 +26,10 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             _logger = logger;
             _timeProvider = timeProvider;
             _options = options;
+            _minIdTrimSupport = minIdTrimSupport;
             _trim = options.TrimStrategy switch
             {
+                RedisStreamTrimStrategy.Auto => TrimAutomaticallyAsync,
                 RedisStreamTrimStrategy.AcknowledgedOnly => TrimAcknowledgedEntriesAsync,
                 RedisStreamTrimStrategy.MaxLength => TrimToMaxLengthAsync,
                 _ => throw new ArgumentOutOfRangeException(nameof(options), options.TrimStrategy, "Unknown trim strategy."),
@@ -57,6 +61,23 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
 
         private Task<long> TrimToMaxLengthAsync() =>
             _database.StreamTrimAsync(_streamKey, _options.MaxStreamLength, useApproximateMaxLength: true);
+
+        private async Task<long> TrimAutomaticallyAsync()
+        {
+            if (_minIdTrimSupport.IsSupported)
+            {
+                try
+                {
+                    return await TrimAcknowledgedEntriesAsync();
+                }
+                catch (NotSupportedException ex)
+                {
+                    _minIdTrimSupport.MarkUnsupported(_logger, ex);
+                }
+            }
+
+            return await TrimToMaxLengthAsync();
+        }
 
         private async Task<long> TrimAcknowledgedEntriesAsync()
         {

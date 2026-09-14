@@ -1,4 +1,4 @@
-using StackExchange.Redis;
+﻿using StackExchange.Redis;
 using System.Text.Json;
 using Universley.OrleansContrib.StreamsProvider.Redis;
 
@@ -71,7 +71,7 @@ namespace RedisStreamsProvider.UnitTests
         }
 
         [Fact]
-        public void Constructor_ShouldThrowArgumentNullException_ForInvalidStreamEntry()
+        public void Constructor_ShouldThrowArgumentException_ForInvalidStreamEntry()
         {
             // Arrange
             var invalidStreamEntry = new StreamEntry("1-0", new NameValueEntry[]
@@ -83,7 +83,7 @@ namespace RedisStreamsProvider.UnitTests
             });
 
             // Act & Assert
-            Assert.Throws<ArgumentNullException>(() => new RedisStreamBatchContainer(invalidStreamEntry));
+            Assert.Throws<ArgumentException>(() => new RedisStreamBatchContainer(invalidStreamEntry));
         }
 
         private class TestEvent

@@ -1,11 +1,8 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Time.Testing;
-using Orleans.Configuration;
-using Orleans.Providers.Streams.Common;
 using StackExchange.Redis;
 using Universley.OrleansContrib.StreamsProvider.Redis;
-using MsOptions = Microsoft.Extensions.Options.Options;
 
 namespace RedisStreamsProvider.IntegrationTests;
 
@@ -103,8 +100,7 @@ public sealed class TrimmingTests(RedisFixture redis)
     {
         var logs = new FakeLogCollector();
         using var loggerFactory = LoggerFactory.Create(builder => builder.AddProvider(new FakeLoggerProvider(logs)).SetMinimumLevel(LogLevel.Debug));
-        var factory = new RedisStreamFactory(redis.Connection, loggerFactory, $"it-{Guid.NewGuid():N}", new RedisStreamFailureHandler(loggerFactory.CreateLogger<RedisStreamFailureHandler>()),
-            new SimpleQueueCacheOptions(), new HashRingStreamQueueMapperOptions { TotalQueueCount = 1 }, MsOptions.Create(new RedisStreamReceiverOptions()));
+        var factory = ProviderHarness.CreateFactory(redis.Connection, loggerFactory, new RedisStreamReceiverOptions());
 
         await factory.CreateAdapter();
 

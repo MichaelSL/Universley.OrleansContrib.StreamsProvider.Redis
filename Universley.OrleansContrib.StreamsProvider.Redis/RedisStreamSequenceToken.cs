@@ -13,20 +13,33 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
 
         public RedisStreamSequenceToken(RedisValue id)
         {
-            [System.Diagnostics.CodeAnalysis.DoesNotReturn]  static void ThrowArgumentException() => throw new ArgumentException(message: $"Invalid {nameof(id)}", paramName: nameof(id));
-            var redisValueId = id.ToString();
-            
-            var splitIndex = redisValueId.IndexOf('-');  
-            if (splitIndex < 0) 
-                ThrowArgumentException();  
-            SequenceNumber = long.Parse(redisValueId.AsSpan(0, splitIndex));  
-            EventIndex = int.Parse(redisValueId.AsSpan(splitIndex+1));
+            if (!TryParse(id, out var sequenceNumber, out var eventIndex))
+            {
+                throw new ArgumentException(message: $"Invalid {nameof(id)}", paramName: nameof(id));
+            }
+
+            SequenceNumber = sequenceNumber;
+            EventIndex = eventIndex;
         }
+
         public RedisStreamSequenceToken(long sequenceNumber, int eventIndex)
         {
             SequenceNumber = sequenceNumber;
             EventIndex = eventIndex;
         }
+
+        /// <summary>Parses a stream entry id of the form <c>milliseconds-sequence</c>.</summary>
+        internal static bool TryParse(RedisValue id, out long sequenceNumber, out int eventIndex)
+        {
+            var value = id.ToString().AsSpan();
+            var splitIndex = value.IndexOf('-');
+            sequenceNumber = 0;
+            eventIndex = 0;
+            return splitIndex >= 0
+                && long.TryParse(value[..splitIndex], out sequenceNumber)
+                && int.TryParse(value[(splitIndex + 1)..], out eventIndex);
+        }
+
         public override int CompareTo(StreamSequenceToken other)
         {
             if (other is null) throw new ArgumentNullException(nameof(other));

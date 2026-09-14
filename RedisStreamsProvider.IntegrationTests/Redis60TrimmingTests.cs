@@ -1,11 +1,8 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Time.Testing;
-using Orleans.Configuration;
-using Orleans.Providers.Streams.Common;
 using Orleans.Runtime;
 using Universley.OrleansContrib.StreamsProvider.Redis;
-using MsOptions = Microsoft.Extensions.Options.Options;
 
 namespace RedisStreamsProvider.IntegrationTests;
 
@@ -20,10 +17,7 @@ public sealed class Redis60TrimmingTests(Redis60Fixture redis)
     {
         var logs = new FakeLogCollector();
         using var loggerFactory = LoggerFactory.Create(builder => builder.AddProvider(new FakeLoggerProvider(logs)));
-        var providerName = $"it-{Guid.NewGuid():N}";
-        var factory = new RedisStreamFactory(redis.Connection, loggerFactory, providerName, new RedisStreamFailureHandler(loggerFactory.CreateLogger<RedisStreamFailureHandler>()),
-            new SimpleQueueCacheOptions(), new HashRingStreamQueueMapperOptions { TotalQueueCount = 1 },
-            MsOptions.Create(new RedisStreamReceiverOptions { MaxStreamLength = 10, TrimTimeMinutes = 1 }));
+        var factory = ProviderHarness.CreateFactory(redis.Connection, loggerFactory, new RedisStreamReceiverOptions { MaxStreamLength = 10, TrimTimeMinutes = 1 });
 
         var adapter = await factory.CreateAdapter();
         Assert.Contains(logs.GetSnapshot(), IsFallbackWarning);
@@ -49,7 +43,8 @@ public sealed class Redis60TrimmingTests(Redis60Fixture redis)
         // Without the startup probe, only the trim itself can find out that the server is too old.
         var harness = await PublishedHarnessAsync(RedisStreamTrimStrategy.Auto);
         var logger = new FakeLogger<RedisStreamReceiver>();
-        var receiver = await TrimOnceAsync(harness, logger);
+        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var receiver = await TrimOnceAsync(harness, logger, time);
 
         Assert.True(await harness.Database.StreamLengthAsync(harness.Key) < Published);
         Assert.Single(logger.Collector.GetSnapshot(), IsFallbackWarning);
@@ -57,8 +52,6 @@ public sealed class Redis60TrimmingTests(Redis60Fixture redis)
 
         // Later trims go straight to MaxLength without warning again.
         await harness.PublishAsync(Enumerable.Range(0, Published).Select(i => new TestEvent(i, "e")).ToArray());
-        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        receiver.SetTimeProvider(time);
         time.Advance(PastTrimInterval);
         await receiver.TrimStreamIfNeeded();
         Assert.Single(logger.Collector.GetSnapshot(), IsFallbackWarning);
@@ -69,7 +62,7 @@ public sealed class Redis60TrimmingTests(Redis60Fixture redis)
     {
         var harness = await PublishedHarnessAsync(RedisStreamTrimStrategy.AcknowledgedOnly);
         var logger = new FakeLogger<RedisStreamReceiver>();
-        await TrimOnceAsync(harness, logger);
+        await TrimOnceAsync(harness, logger, new FakeTimeProvider(DateTimeOffset.UtcNow));
 
         Assert.Equal(Published, await harness.Database.StreamLengthAsync(harness.Key));
         Assert.Contains(logger.Collector.GetSnapshot(),
@@ -87,9 +80,8 @@ public sealed class Redis60TrimmingTests(Redis60Fixture redis)
         return harness;
     }
 
-    private static async Task<RedisStreamReceiver> TrimOnceAsync(ProviderHarness harness, ILogger<RedisStreamReceiver> logger)
+    private static async Task<RedisStreamReceiver> TrimOnceAsync(ProviderHarness harness, ILogger<RedisStreamReceiver> logger, FakeTimeProvider time)
     {
-        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var receiver = harness.CreateReceiver(time, logger);
         await receiver.Initialize(TimeSpan.FromSeconds(5));
         time.Advance(PastTrimInterval);

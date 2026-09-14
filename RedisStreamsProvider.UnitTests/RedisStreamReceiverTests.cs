@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
 using Moq;
 using Moq.Language.Flow;
 using Orleans.Streams;
@@ -14,6 +15,20 @@ namespace RedisStreamsProvider.UnitTests
         private readonly QueueId _queueId = QueueId.GetQueueId("testQueue", 0, 0);
 
         private RedisStreamReceiver CreateReceiver() => new(_queueId, _mockDatabase.Object, _mockLogger.Object);
+
+        /// <summary>A MaxLength-trimming receiver whose first trim is already due.</summary>
+        private RedisStreamReceiver CreateReceiverWithTrimDue()
+        {
+            var time = new FakeTimeProvider();
+            var options = new RedisStreamReceiverOptions { TrimTimeMinutes = 1, TrimStrategy = RedisStreamTrimStrategy.MaxLength };
+            var trimmer = new RedisStreamTrimmer(_queueId, _mockDatabase.Object, _mockLogger.Object, time, options, new MinIdTrimSupport());
+            time.Advance(TimeSpan.FromMinutes(2));
+            return new RedisStreamReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object, trimmer);
+        }
+
+        private ISetup<IDatabase, Task<long>> SetupMaxLengthTrim() =>
+            _mockDatabase.Setup(db => db.StreamTrimAsync(
+                It.IsAny<RedisKey>(), It.IsAny<long>(), It.IsAny<bool>(), It.IsAny<long?>(), It.IsAny<StreamTrimMode>(), It.IsAny<CommandFlags>()));
 
         private static StreamEntry Entry(string id) => new(id, [
             new(RedisStreamWireFormat.StreamNamespaceField, "testNamespace"),
@@ -262,6 +277,58 @@ namespace RedisStreamsProvider.UnitTests
         }
 
         [Fact]
+        public async Task GetQueueMessagesAsync_DropsFailedAcknowledgements_WhenTheStreamIsRecreated()
+        {
+            // Arrange: "1-0" fails to acknowledge, then the stream key is lost and its group recreated.
+            SetupReadFrom("0").Returns(Reply());
+            SetupNewMessageReads(Throws(new RedisServerException("NOGROUP No such key or consumer group")));
+            var acks = RecordAcknowledgements(failFirst: 1);
+            var receiver = CreateReceiver();
+            await receiver.MessagesDeliveredAsync(Delivered("1-0"));
+            await receiver.GetQueueMessagesAsync(10);
+
+            // Act
+            await receiver.MessagesDeliveredAsync(Delivered("2-0"));
+
+            // Assert: "1-0" belonged to the lost stream; in the new one it could name an entry not delivered yet.
+            Assert.Equal(new[] { "2-0" }, acks[^1]);
+        }
+
+        [Fact]
+        public async Task GetQueueMessagesAsync_TrimsTheStream_WhenATrimIsDue()
+        {
+            // Arrange
+            var receiver = CreateReceiverWithTrimDue();
+
+            // Act
+            await receiver.GetQueueMessagesAsync(10);
+
+            // Assert
+            _mockDatabase.Verify(db => db.StreamTrimAsync(
+                    _queueId.ToString(), It.IsAny<long>(), It.IsAny<bool>(), It.IsAny<long?>(), It.IsAny<StreamTrimMode>(), It.IsAny<CommandFlags>()),
+                Times.Once);
+        }
+
+        [Fact]
+        public async Task GetQueueMessagesAsync_AcknowledgesEntriesWithAMalformedId_AsUnreadable()
+        {
+            // Arrange
+            SetupAnyRead().Returns(Reply(Entry("1-0"), Entry("not-an-id")));
+            var receiver = CreateReceiver();
+
+            // Act
+            var result = await receiver.GetQueueMessagesAsync(10);
+
+            // Assert
+            Assert.Equal(new[] { "1-0" }, Ids(result));
+            _mockDatabase.Verify(db => db.StreamAcknowledgeAsync(
+                    _queueId.ToString(), RedisStreamWireFormat.GroupName,
+                    It.Is<RedisValue[]>(ids => ids.Length == 1 && ids[0] == "not-an-id"),
+                    It.IsAny<CommandFlags>()),
+                Times.Once);
+        }
+
+        [Fact]
         public async Task Initialize_CreatesConsumerGroup()
         {
             // Arrange
@@ -413,6 +480,26 @@ namespace RedisStreamsProvider.UnitTests
 
             // Assert
             Assert.False(completedBeforeReadFinished);
+            Assert.True(getMessages.IsCompleted);
+        }
+
+        [Fact]
+        public async Task Shutdown_WaitsForTheTrimInFlight()
+        {
+            // Arrange
+            var trim = new TaskCompletionSource<long>();
+            SetupMaxLengthTrim().Returns(trim.Task);
+            var receiver = CreateReceiverWithTrimDue();
+            var getMessages = receiver.GetQueueMessagesAsync(10);
+
+            // Act
+            var shutdown = receiver.Shutdown(TimeSpan.FromSeconds(5));
+            var completedBeforeTrimFinished = shutdown.IsCompleted;
+            trim.SetResult(0);
+            await shutdown;
+
+            // Assert
+            Assert.False(completedBeforeTrimFinished);
             Assert.True(getMessages.IsCompleted);
         }
     }

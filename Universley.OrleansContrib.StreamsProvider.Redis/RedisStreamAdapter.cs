@@ -1,8 +1,7 @@
 ﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Orleans.Streams;
 using StackExchange.Redis;
-using System.Text.Json;
-using Microsoft.Extensions.Options; // Added for IOptions
 
 namespace Universley.OrleansContrib.StreamsProvider.Redis
 {
@@ -13,14 +12,13 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         private readonly HashRingBasedStreamQueueMapper _hashRingBasedStreamQueueMapper;
         private readonly ILoggerFactory _loggerFactory;
         private readonly ILogger<RedisStreamAdapter> _logger;
-        private readonly IOptions<RedisStreamReceiverOptions> _receiverOptions; // Added receiver options
+        private readonly IOptions<RedisStreamReceiverOptions> _receiverOptions;
         private readonly MinIdTrimSupport _minIdTrimSupport;
 
-        // Changed: Constructor to accept IOptions<RedisStreamReceiverOptions>
-        public RedisStreamAdapter(IDatabase database, 
-                                string providerName, 
-                                HashRingBasedStreamQueueMapper hashRingBasedStreamQueueMapper, 
-                                ILoggerFactory loggerFactory, 
+        public RedisStreamAdapter(IDatabase database,
+                                string providerName,
+                                HashRingBasedStreamQueueMapper hashRingBasedStreamQueueMapper,
+                                ILoggerFactory loggerFactory,
                                 IOptions<RedisStreamReceiverOptions> receiverOptions)
             : this(database, providerName, hashRingBasedStreamQueueMapper, loggerFactory, receiverOptions, new MinIdTrimSupport())
         {
@@ -39,7 +37,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             _hashRingBasedStreamQueueMapper = hashRingBasedStreamQueueMapper ?? throw new ArgumentNullException(nameof(hashRingBasedStreamQueueMapper));
             _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
             _logger = loggerFactory.CreateLogger<RedisStreamAdapter>();
-            _receiverOptions = receiverOptions ?? throw new ArgumentNullException(nameof(receiverOptions)); // Store receiver options
+            _receiverOptions = receiverOptions ?? throw new ArgumentNullException(nameof(receiverOptions));
             _minIdTrimSupport = minIdTrimSupport;
         }
 
@@ -51,23 +49,21 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
 
         public IQueueAdapterReceiver CreateReceiver(QueueId queueId)
         {
-            // Pass receiver options to RedisStreamReceiver
-            return new RedisStreamReceiver(queueId, _database, _loggerFactory.CreateLogger<RedisStreamReceiver>(), TimeProvider.System, _receiverOptions, _minIdTrimSupport);
+            var logger = _loggerFactory.CreateLogger<RedisStreamReceiver>();
+            var trimmer = new RedisStreamTrimmer(queueId, _database, logger, TimeProvider.System, _receiverOptions.Value, _minIdTrimSupport);
+            return new RedisStreamReceiver(queueId, _database, logger, trimmer);
         }
 
         public async Task QueueMessageBatchAsync<T>(StreamId streamId, IEnumerable<T> events, StreamSequenceToken token, Dictionary<string, object> requestContext)
         {
             try
             {
-                foreach (var @event in events)
-                {
-                    NameValueEntry streamNamespaceEntry = new(RedisStreamWireFormat.StreamNamespaceField, streamId.Namespace);
-                    NameValueEntry streamKeyEntry = new(RedisStreamWireFormat.StreamKeyField, streamId.Key);
-                    NameValueEntry eventTypeEntry = new(RedisStreamWireFormat.EventTypeField, @event!.GetType().Name);
-                    NameValueEntry dataEntry = new(RedisStreamWireFormat.DataField, JsonSerializer.Serialize(@event));
-                    var queueId = _hashRingBasedStreamQueueMapper.GetQueueForStream(streamId);
-                    await _database.StreamAddAsync(RedisStreamWireFormat.StreamKey(queueId), [streamNamespaceEntry, streamKeyEntry, eventTypeEntry, dataEntry]);
-                }
+                var streamKey = RedisStreamWireFormat.StreamKey(_hashRingBasedStreamQueueMapper.GetQueueForStream(streamId));
+                // One transaction, so a failed call leaves none of its events in the stream for a retry to duplicate.
+                var transaction = _database.CreateTransaction();
+                var added = events.Select(@event => transaction.StreamAddAsync(streamKey, RedisStreamWireFormat.Encode(streamId, @event))).ToList();
+                await transaction.ExecuteAsync();
+                await Task.WhenAll(added);
             }
             catch (Exception ex)
             {

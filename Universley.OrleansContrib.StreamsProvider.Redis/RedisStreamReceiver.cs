@@ -15,11 +15,13 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         private readonly string _streamKey;
         private readonly IDatabase _database;
         private readonly ILogger<RedisStreamReceiver> _logger;
-        private readonly RedisStreamReceiverOptions _receiverOptions;
-        private readonly MinIdTrimSupport _minIdTrimSupport;
         private RedisStreamTrimmer _trimmer;
-        // The newest entry handed to Orleans (or acknowledged as unreadable). Reads return ids in ascending order and
-        // each read starts past the previous one, so every entry this consumer has read and not handed on is newer.
+
+        // The next three fields track where this receiver stands in one incarnation of the stream key, and
+        // StartOverOnNewStream resets them together.
+        // The newest entry read and handed on, to Orleans or to be acknowledged as unreadable. Reads return ids in
+        // ascending order and each read starts past the previous one, so every entry this consumer has read and not
+        // handed on is newer.
         private RedisValue _lastReturnedId = "0";
         // While catching up, reads walk this consumer's pending list from _lastReturnedId instead of asking for new
         // messages: on start, to redeliver what a previous owner never acknowledged, and after a failed read.
@@ -27,43 +29,43 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         // Entries whose XACK failed. They stay pending in Redis, so they are sent again with the next acknowledgement
         // (XACK is idempotent); otherwise nothing would acknowledge them before the next restart or queue handoff.
         private readonly List<RedisValue> _unacknowledged = [];
-        private Task? pendingTasks;
+
+        // The read or acknowledgement in progress, which Shutdown waits for. Neither ever faults.
+        private Task _inFlight = Task.CompletedTask;
 
         public RedisStreamReceiver(QueueId queueId,
                                  IDatabase database,
                                  ILogger<RedisStreamReceiver> logger,
                                  TimeProvider? timeProvider = null,
                                  IOptions<RedisStreamReceiverOptions>? receiverOptions = null)
-            : this(queueId, database, logger, timeProvider, receiverOptions, new MinIdTrimSupport())
+            : this(queueId, database, logger, new RedisStreamTrimmer(queueId, database, logger, timeProvider ?? TimeProvider.System,
+                receiverOptions?.Value ?? new RedisStreamReceiverOptions(), new MinIdTrimSupport()))
         {
         }
 
-        internal RedisStreamReceiver(QueueId queueId,
-                                   IDatabase database,
-                                   ILogger<RedisStreamReceiver> logger,
-                                   TimeProvider? timeProvider,
-                                   IOptions<RedisStreamReceiverOptions>? receiverOptions,
-                                   MinIdTrimSupport minIdTrimSupport)
+        internal RedisStreamReceiver(QueueId queueId, IDatabase database, ILogger<RedisStreamReceiver> logger, RedisStreamTrimmer trimmer)
         {
             _queueId = queueId;
             _streamKey = RedisStreamWireFormat.StreamKey(queueId);
             _database = database ?? throw new ArgumentNullException(nameof(database));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _receiverOptions = receiverOptions?.Value ?? new RedisStreamReceiverOptions();
-            _minIdTrimSupport = minIdTrimSupport;
-            _trimmer = CreateTrimmer(timeProvider ?? TimeProvider.System);
+            _trimmer = trimmer;
         }
 
         /// <summary>Replaces the time provider; the next trim is due one full interval from now.</summary>
         public void SetTimeProvider(TimeProvider timeProvider)
         {
-            _trimmer = CreateTrimmer(timeProvider ?? throw new ArgumentNullException(nameof(timeProvider)));
+            _trimmer = _trimmer.WithTimeProvider(timeProvider ?? throw new ArgumentNullException(nameof(timeProvider)));
         }
 
-        private RedisStreamTrimmer CreateTrimmer(TimeProvider timeProvider) =>
-            new(_queueId, _database, _logger, timeProvider, _receiverOptions, _minIdTrimSupport);
+        public Task<IList<IBatchContainer>?> GetQueueMessagesAsync(int maxCount)
+        {
+            var read = ReadBatchesAsync(maxCount);
+            _inFlight = read;
+            return read;
+        }
 
-        public async Task<IList<IBatchContainer>?> GetQueueMessagesAsync(int maxCount)
+        private async Task<IList<IBatchContainer>?> ReadBatchesAsync(int maxCount)
         {
             try
             {
@@ -71,12 +73,6 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
                 var batches = ToBatches(entries, out var unreadable);
                 await AcknowledgeAsync(unreadable);
                 await TrimStreamIfNeeded();
-
-                if (entries.Length > 0)
-                {
-                    _lastReturnedId = entries[^1].Id;
-                }
-
                 return batches;
             }
             catch (RedisServerException ex) when (ex.Message.StartsWith("NOGROUP", StringComparison.Ordinal))
@@ -97,21 +93,26 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             }
         }
 
+        /// <summary>Reads the next entries and advances past them; every entry returned must be handed on.</summary>
         private async Task<StreamEntry[]> ReadEntriesAsync(int count)
         {
-            if (_catchingUp)
+            var entries = await ReadFromAsync(_catchingUp ? _lastReturnedId : NewMessages, count);
+            if (entries.Length == 0 && _catchingUp)
             {
-                var pending = await TrackAsync(_database.StreamReadGroupAsync(_streamKey, RedisStreamWireFormat.GroupName, _streamKey, _lastReturnedId, count));
-                if (pending.Length > 0)
-                {
-                    return pending;
-                }
-
                 _catchingUp = false;
+                entries = await ReadFromAsync(NewMessages, count);
             }
 
-            return await TrackAsync(_database.StreamReadGroupAsync(_streamKey, RedisStreamWireFormat.GroupName, _streamKey, NewMessages, count));
+            if (entries.Length > 0)
+            {
+                _lastReturnedId = entries[^1].Id;
+            }
+
+            return entries;
         }
+
+        private Task<StreamEntry[]> ReadFromAsync(RedisValue position, int count) =>
+            _database.StreamReadGroupAsync(_streamKey, RedisStreamWireFormat.GroupName, _streamKey, position, count);
 
         private List<IBatchContainer> ToBatches(StreamEntry[] entries, out List<RedisValue> unreadable)
         {
@@ -119,15 +120,15 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             unreadable = [];
             foreach (var entry in entries)
             {
-                try
+                if (RedisStreamWireFormat.TryDecode(entry, out var batch))
                 {
-                    batches.Add(new RedisStreamBatchContainer(entry));
+                    batches.Add(batch);
                 }
-                catch (Exception ex) when (ex is ArgumentException or FormatException or OverflowException)
+                else
                 {
-                    // Entries deleted while still pending come back with no fields. Either way this entry can never
-                    // be delivered, and leaving it pending would keep it (and everything read with it) stuck.
-                    _logger.LogError(ex, "Acknowledging unreadable entry {EntryId} in stream {QueueId} without delivering it", entry.Id, _queueId);
+                    // This entry can never be delivered, and leaving it pending would keep it (and everything read
+                    // with it) stuck.
+                    _logger.LogError("Acknowledging unreadable entry {EntryId} in stream {QueueId} without delivering it", entry.Id, _queueId);
                     unreadable.Add(entry.Id);
                 }
             }
@@ -167,9 +168,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             try
             {
                 await EnsureConsumerGroupAsync();
-                // Ids from the lost stream say nothing about the new one, whose ids can even be lower.
-                _lastReturnedId = "0";
-                _catchingUp = true;
+                StartOverOnNewStream();
             }
             catch (Exception ex)
             {
@@ -177,8 +176,23 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             }
         }
 
-        public Task MessagesDeliveredAsync(IList<IBatchContainer> messages) =>
-            AcknowledgeAsync(messages.OfType<RedisStreamBatchContainer>().Select(m => (RedisValue)m.StreamEntryId).ToList());
+        /// <summary>
+        /// Forgets everything about the lost stream. Its ids say nothing about the new one, whose ids can even be lower:
+        /// reading past them could skip new entries, and acknowledging them could acknowledge new entries not delivered yet.
+        /// </summary>
+        private void StartOverOnNewStream()
+        {
+            _lastReturnedId = "0";
+            _catchingUp = true;
+            _unacknowledged.Clear();
+        }
+
+        public Task MessagesDeliveredAsync(IList<IBatchContainer> messages)
+        {
+            var acknowledgement = AcknowledgeAsync(messages.OfType<RedisStreamBatchContainer>().Select(m => (RedisValue)m.StreamEntryId).ToList());
+            _inFlight = acknowledgement;
+            return acknowledgement;
+        }
 
         /// <summary>Acknowledges <paramref name="ids"/> together with every earlier id whose acknowledgement failed.</summary>
         private async Task AcknowledgeAsync(List<RedisValue> ids)
@@ -191,7 +205,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             _unacknowledged.AddRange(ids);
             try
             {
-                await TrackAsync(_database.StreamAcknowledgeAsync(_streamKey, RedisStreamWireFormat.GroupName, [.. _unacknowledged]));
+                await _database.StreamAcknowledgeAsync(_streamKey, RedisStreamWireFormat.GroupName, [.. _unacknowledged]);
                 _unacknowledged.Clear();
             }
             catch (Exception ex)
@@ -200,30 +214,9 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             }
         }
 
-        // Shutdown waits for the Redis call in flight.
-        private async Task<T> TrackAsync<T>(Task<T> call)
-        {
-            pendingTasks = call;
-            try
-            {
-                return await call;
-            }
-            finally
-            {
-                pendingTasks = null;
-            }
-        }
-
         public async Task Shutdown(TimeSpan timeout)
         {
-            using (var cts = new CancellationTokenSource(timeout))
-            {
-
-                if (pendingTasks is not null)
-                {
-                    await pendingTasks.WaitAsync(timeout, cts.Token);
-                }
-            }
+            await _inFlight.WaitAsync(timeout);
             _logger.LogInformation("Shutting down stream {QueueId}", _queueId);
         }
     }

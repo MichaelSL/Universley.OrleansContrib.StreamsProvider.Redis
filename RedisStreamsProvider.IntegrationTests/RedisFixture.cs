@@ -7,18 +7,26 @@ public sealed class RedisFixture : IAsyncLifetime
 {
     private readonly RedisContainer _container = new RedisBuilder("redis:7.4").Build();
 
-    public IConnectionMultiplexer Connection { get; private set; } = null!;
+    private IConnectionMultiplexer? _connection;
+
+    public IConnectionMultiplexer Connection =>
+        _connection ?? throw new InvalidOperationException("The Redis fixture has not been initialized.");
 
     public async Task InitializeAsync()
     {
         await _container.StartAsync();
-        Connection = await ConnectionMultiplexer.ConnectAsync(_container.GetConnectionString());
+        _connection = await ConnectionMultiplexer.ConnectAsync(_container.GetConnectionString());
     }
 
     public async Task DisposeAsync()
     {
-        await Connection.CloseAsync();
-        Connection.Dispose();
+        // The connection is still null when InitializeAsync failed before connecting.
+        if (_connection is not null)
+        {
+            await _connection.CloseAsync();
+            _connection.Dispose();
+        }
+
         await _container.DisposeAsync();
     }
 }

@@ -126,6 +126,10 @@
         "Solution": {
           "type": "string",
           "description": "Path to a solution file that is automatically loaded"
+        },
+        "StackExchangeRedisVersion": {
+          "type": "string",
+          "description": "StackExchange.Redis version to build and test against - Default is the lowest supported one, which the package also declares"
         }
       }
     },

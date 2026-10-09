@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -10,7 +10,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Orleans.Client" Version="10.0.1" />
     <PackageReference Include="Microsoft.Orleans.Streaming" Version="10.0.1" />
-    <PackageReference Include="StackExchange.Redis" Version="2.11.3" />
+    <PackageReference Include="StackExchange.Redis" Version="$(StackExchangeRedisVersion)" />
   </ItemGroup>
 
   <ItemGroup>

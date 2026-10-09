@@ -28,7 +28,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             {
                 foreach (var server in multiplexer.GetServers().Where(s => s.IsConnected && !s.IsReplica))
                 {
-                    var info = (string?)await server.ExecuteAsync("INFO", "server");
+                    var info = await ReadServerInfoAsync(server);
                     if (TryGetVersion(info, out var version) && version < MinimumVersion)
                     {
                         MarkUnsupported(logger);
@@ -39,6 +39,22 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             catch (Exception ex)
             {
                 logger.LogDebug(ex, "Could not read the Redis server version; the first trim decides whether XTRIM MINID is supported");
+            }
+        }
+
+        /// <summary>
+        /// StackExchange.Redis 3 refuses a raw <c>INFO</c> unless the connection allows admin commands, so when it fails the
+        /// same reply is read from a script, which needs no admin mode on either client major version.
+        /// </summary>
+        private static async Task<string?> ReadServerInfoAsync(IServer server)
+        {
+            try
+            {
+                return (string?)await server.ExecuteAsync("INFO", "server");
+            }
+            catch (Exception)
+            {
+                return (string?)await server.ExecuteAsync("EVAL", "return redis.call('INFO', 'server')", 0);
             }
         }
 

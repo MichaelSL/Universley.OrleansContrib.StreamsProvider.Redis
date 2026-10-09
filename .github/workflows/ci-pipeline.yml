@@ -47,3 +47,26 @@ jobs:
         shell: bash
         run: |
          ./build.cmd -Target Publish
+
+  test-stackexchange-redis-3:
+    runs-on: [ ubuntu-latest ]
+    name: Test against StackExchange.Redis 3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Make Build File Executable
+        shell: bash
+        run: |
+          chmod +x ./build.cmd
+          chmod +x ./build.sh
+
+      - name: Run Nuke Tests
+        shell: bash
+        run: |
+         ./build.cmd -Target Test --stack-exchange-redis-version 3.4.0

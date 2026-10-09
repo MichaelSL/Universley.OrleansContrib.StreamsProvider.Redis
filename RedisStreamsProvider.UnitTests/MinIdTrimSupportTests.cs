@@ -59,11 +59,27 @@ namespace RedisStreamsProvider.UnitTests
         }
 
         [Fact]
-        public async Task DetectAsync_LeavesMinIdSupported_WhenInfoFails()
+        public async Task DetectAsync_ReadsTheVersionThroughEval_WhenTheClientRefusesInfo()
         {
-            // Some proxies and managed services disable INFO.
+            // StackExchange.Redis 3 refuses a raw INFO unless the connection allows admin commands.
+            var server = Server(null);
+            server.Setup(s => s.ExecuteAsync("INFO", It.IsAny<object[]>()))
+                .ThrowsAsync(new RedisCommandException("This operation is not available unless admin mode is enabled: INFO"));
+            server.Setup(s => s.ExecuteAsync("EVAL", It.IsAny<object[]>()))
+                .ReturnsAsync(RedisResult.Create((RedisValue)"# Server\r\nredis_version:6.0.20\r\n"));
+
+            var support = await DetectAsync(server);
+
+            Assert.False(support.IsSupported);
+        }
+
+        [Fact]
+        public async Task DetectAsync_LeavesMinIdSupported_WhenInfoAndEvalFail()
+        {
+            // Some proxies and managed services disable INFO, and with it INFO from a script.
             var server = Server("6.0.20");
             server.Setup(s => s.ExecuteAsync("INFO", It.IsAny<object[]>())).ThrowsAsync(new RedisServerException("ERR unknown command 'INFO'"));
+            server.Setup(s => s.ExecuteAsync("EVAL", It.IsAny<object[]>())).ThrowsAsync(new RedisServerException("ERR unknown command 'INFO'"));
 
             var support = await DetectAsync(server);
 

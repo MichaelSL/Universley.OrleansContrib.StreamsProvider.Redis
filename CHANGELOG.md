@@ -21,6 +21,7 @@ Production hardening: no silently lost or stuck events, and tests against a real
 
 ### Fixed
 
+- On StackExchange.Redis 3 the startup check for `XTRIM MINID` support could not read the server version, because a raw `INFO` needs admin mode there. It now reads `INFO` from a script when the raw command fails.
 - A failed publish was swallowed, so the producer believed the event was sent.
 - One unreadable entry, or one deleted while pending, failed the whole read and left every entry in it pending forever. Unreadable entries are now logged, acknowledged and skipped.
 - After a restart or queue handoff only the first `maxCount` pending entries were redelivered; the rest stayed pending forever. Entries whose read reply was lost to a timeout are now re-read as well.
@@ -36,3 +37,4 @@ Production hardening: no silently lost or stuck events, and tests against a real
 - The events of one publish call are written with one `MULTI`/`EXEC` transaction instead of one `XADD` round trip each.
 - `RedisStreamBatchContainer(StreamEntry)` throws `ArgumentException` for an entry it cannot read, instead of `ArgumentNullException` for a missing field and `FormatException` or `OverflowException` for a malformed id.
 - The build and CI use the .NET 10 SDK.
+- Works with StackExchange.Redis 2.x and 3.x. The package still declares 2.11.3 as its minimum, and CI runs the tests against 3.x as well.

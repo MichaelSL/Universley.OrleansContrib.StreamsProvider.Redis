@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <!-- The lowest supported client: the package declares it, so consumers on 2.x are not forced to 3.x.
+         CI also builds and tests against 3.x by overriding it: see the StackExchangeRedisVersion parameter in build/Build.cs. -->
+    <StackExchangeRedisVersion Condition="'$(StackExchangeRedisVersion)' == ''">2.11.3</StackExchangeRedisVersion>
+  </PropertyGroup>
+</Project>

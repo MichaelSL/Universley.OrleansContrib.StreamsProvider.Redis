@@ -30,8 +30,8 @@ builder.ConfigureServices(services =>
     services.AddOptions<RedisStreamReceiverOptions>("RedisStream")
         .Configure(options =>
         {
-            options.MaxStreamLength = 1000;  // max messages kept in Redis stream before trimming
-            options.TrimTimeMinutes = 5;     // how often the stream is trimmed
+            options.BacklogWarningLength = 1000; // warn when more entries than this are still in the stream after trimming
+            options.TrimTimeMinutes = 5;         // how often the stream is trimmed
         });
 });
 using IHost host = builder.Build();

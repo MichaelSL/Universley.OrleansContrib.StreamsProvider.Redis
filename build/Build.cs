@@ -30,6 +30,9 @@ class Build : NukeBuild
     [Parameter("Configuration to build - Default is 'Debug' (local) or 'Release' (server)")]
     readonly Configuration Configuration = IsLocalBuild ? Configuration.Debug : Configuration.Release;
 
+    [Parameter("StackExchange.Redis version to build and test against - Default is the lowest supported one, which the package also declares")]
+    readonly string StackExchangeRedisVersion;
+
     [Solution] readonly Solution Solution;
 
     AbsolutePath SourceDirectory => RootDirectory;
@@ -74,7 +77,9 @@ class Build : NukeBuild
                 .SetConfiguration(Configuration)
                 .SetAssemblyVersion(semVer)
                 .SetFileVersion(semFileVer)
-                .SetInformationalVersion(informationalVersion));
+                .SetInformationalVersion(informationalVersion)
+                .When(_ => !string.IsNullOrEmpty(StackExchangeRedisVersion), s => s
+                    .SetProperty("StackExchangeRedisVersion", StackExchangeRedisVersion)));
         });
 
     Target Test => _ => _
@@ -84,7 +89,10 @@ class Build : NukeBuild
            DotNetTasks.DotNetTest(s => s
                    .SetProjectFile(Solution)
                    .SetConfiguration(Configuration)
-                   .SetLoggers($"trx;LogFileName={TestResultDirectory / "testresults.trx"}")
+                   .SetResultsDirectory(TestResultDirectory)
+                   .SetLoggers("trx")
+                   .When(_ => !string.IsNullOrEmpty(StackExchangeRedisVersion), s => s
+                       .SetProperty("StackExchangeRedisVersion", StackExchangeRedisVersion))
            );
        });
 

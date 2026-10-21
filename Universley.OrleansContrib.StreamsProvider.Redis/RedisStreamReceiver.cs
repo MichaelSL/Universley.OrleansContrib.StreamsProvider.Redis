@@ -1,6 +1,4 @@
 ﻿using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
-using Orleans.Serialization;
 using Orleans.Streams;
 using StackExchange.Redis;
 
@@ -34,18 +32,6 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
 
         // The read or acknowledgement in progress, which Shutdown waits for. Neither ever faults.
         private Task _inFlight = Task.CompletedTask;
-
-        public RedisStreamReceiver(QueueId queueId,
-                                 IDatabase database,
-                                 ILogger<RedisStreamReceiver> logger,
-                                 Serializer serializer,
-                                 TimeProvider? timeProvider = null,
-                                 IOptions<RedisStreamReceiverOptions>? receiverOptions = null)
-            : this(queueId, database, logger, new RedisStreamCodec(serializer, receiverOptions?.Value.PayloadFormat ?? default),
-                new RedisStreamTrimmer(queueId, database, logger, timeProvider ?? TimeProvider.System,
-                    receiverOptions?.Value ?? new RedisStreamReceiverOptions(), new MinIdTrimSupport()))
-        {
-        }
 
         internal RedisStreamReceiver(QueueId queueId, IDatabase database, ILogger<RedisStreamReceiver> logger, RedisStreamCodec codec, RedisStreamTrimmer trimmer)
         {

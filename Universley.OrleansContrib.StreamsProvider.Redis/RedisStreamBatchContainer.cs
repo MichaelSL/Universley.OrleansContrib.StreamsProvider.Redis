@@ -1,5 +1,4 @@
 ﻿using Orleans.Streams;
-using System.Text.Json;
 
 namespace Universley.OrleansContrib.StreamsProvider.Redis
 {
@@ -30,20 +29,11 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
 
         public IEnumerable<Tuple<T, StreamSequenceToken>> GetEvents<T>()
         {
-            List<Tuple<T, StreamSequenceToken>> events = new();
-            switch (Event)
+            if (Event is RedisStreamLegacyJsonEvent legacy)
             {
-                case RedisStreamLegacyJsonEvent legacy:
-                    if (legacy.TypeName == typeof(T).Name)
-                    {
-                        events.Add(new(JsonSerializer.Deserialize<T>(legacy.Json)!, SequenceToken));
-                    }
-                    break;
-                case T @event:
-                    events.Add(new(@event, SequenceToken));
-                    break;
+                return legacy.TryRead<T>(out var read) ? [new(read, SequenceToken)] : [];
             }
-            return events;
+            return Event is T @event ? [new(@event, SequenceToken)] : [];
         }
 
         public bool ImportRequestContext()

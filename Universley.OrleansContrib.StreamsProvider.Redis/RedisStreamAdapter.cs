@@ -16,6 +16,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         private readonly IOptions<RedisStreamReceiverOptions> _receiverOptions;
         private readonly MinIdTrimSupport _minIdTrimSupport;
         private readonly RedisStreamCodec _codec;
+        private readonly RedisStreamPayloadFormat _payloadFormat;
 
         public RedisStreamAdapter(IDatabase database,
                                 string providerName,
@@ -42,7 +43,10 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
             _logger = loggerFactory.CreateLogger<RedisStreamAdapter>();
             _receiverOptions = receiverOptions ?? throw new ArgumentNullException(nameof(receiverOptions));
-            _codec = new RedisStreamCodec(serializer, receiverOptions.Value.PayloadFormat);
+            _codec = new RedisStreamCodec(serializer);
+            _payloadFormat = Enum.IsDefined(receiverOptions.Value.PayloadFormat)
+                ? receiverOptions.Value.PayloadFormat
+                : throw new ArgumentOutOfRangeException(nameof(receiverOptions), receiverOptions.Value.PayloadFormat, "Unknown PayloadFormat");
             _minIdTrimSupport = minIdTrimSupport;
         }
 
@@ -65,7 +69,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             {
                 var streamKey = RedisStreamWireFormat.StreamKey(_hashRingBasedStreamQueueMapper.GetQueueForStream(streamId));
                 // Serialized up front, so an event that cannot be serialized fails the call before anything is sent.
-                var entries = events.Select(@event => _codec.Encode(streamId, @event)).ToList();
+                var entries = events.Select(@event => _codec.Encode(streamId, @event, _payloadFormat)).ToList();
                 // One transaction, so a failed call leaves none of its events in the stream for a retry to duplicate.
                 var transaction = _database.CreateTransaction();
                 var added = entries.Select(entry => transaction.StreamAddAsync(streamKey, entry)).ToList();

@@ -9,12 +9,12 @@ namespace RedisStreamsProvider.UnitTests
     public class RedisStreamCodecTests
     {
         private static readonly StreamId Stream = StreamId.Create("namespace", "key");
-        private static readonly RedisStreamCodec Codec = new(TestSerializer.Instance, RedisStreamPayloadFormat.OrleansCodec);
+        private static readonly RedisStreamCodec Codec = new(TestSerializer.Instance);
 
         [Fact]
         public void Constructor_ShouldThrowArgumentNullException_WhenSerializerIsNull()
         {
-            Assert.Throws<ArgumentNullException>(() => new RedisStreamCodec(null!, RedisStreamPayloadFormat.OrleansCodec));
+            Assert.Throws<ArgumentNullException>(() => new RedisStreamCodec(null!));
         }
 
         [Theory]
@@ -63,9 +63,21 @@ namespace RedisStreamsProvider.UnitTests
         }
 
         [Fact]
-        public void Constructor_Throws_ForAnUnknownFormat()
+        public void Encode_Throws_ForAnUndefinedFormat()
         {
-            Assert.Throws<ArgumentOutOfRangeException>(() => new RedisStreamCodec(TestSerializer.Instance, (RedisStreamPayloadFormat)42));
+            Assert.Throws<ArgumentOutOfRangeException>(() => Encode(new TestEvent(1, "one"), (RedisStreamPayloadFormat)42));
+        }
+
+        [Fact]
+        public void TryDecode_Fails_ForAFormatThisVersionDoesNotKnow()
+        {
+            // As a later version might write: an unknown format must be unreadable, not mistaken for legacy JSON.
+            var fields = Encode(new TestEvent(1, "one"), RedisStreamPayloadFormat.OrleansCodec)
+                .Select(f => f.Name == RedisStreamWireFormat.FormatField ? new NameValueEntry(f.Name, "orleans2") : f)
+                .ToArray();
+
+            Assert.False(Codec.TryDecode(new StreamEntry("1-0", fields), out _, out var error));
+            Assert.Contains("unknown format orleans2", Assert.IsType<FormatException>(error).Message);
         }
 
         [Fact]
@@ -143,6 +155,6 @@ namespace RedisStreamsProvider.UnitTests
         }
 
         private static NameValueEntry[] Encode<T>(T @event, RedisStreamPayloadFormat format) =>
-            new RedisStreamCodec(TestSerializer.Instance, format).Encode(Stream, @event);
+            Codec.Encode(Stream, @event, format);
     }
 }

@@ -103,8 +103,7 @@ namespace RedisStreamsProvider.UnitTests
         public void RoundTripsThroughTheOrleansSerializer_AsWhenDeliveredToAConsumerOnAnotherSilo()
         {
             var orleans = RoundTrip(Encoded(new UnitTests.TestEvent(1, "one"), "5-3"));
-            var legacy = RoundTrip(Decoded(new StreamEntry("1-0", new RedisStreamCodec(TestSerializer.Instance, RedisStreamPayloadFormat.Json)
-                .Encode(StreamId.Create("testNamespace", "testKey"), new UnitTests.TestEvent(2, "two")))));
+            var legacy = RoundTrip(Decoded(new StreamEntry("1-0", Codec.Encode(StreamId.Create("testNamespace", "testKey"), new UnitTests.TestEvent(2, "two"), RedisStreamPayloadFormat.Json))));
 
             Assert.Equal("5-3", orleans.StreamEntryId);
             Assert.Equal(new RedisStreamSequenceToken(5, 3), orleans.SequenceToken);
@@ -115,7 +114,7 @@ namespace RedisStreamsProvider.UnitTests
         private static RedisStreamBatchContainer RoundTrip(RedisStreamBatchContainer container) =>
             TestSerializer.Instance.Deserialize<RedisStreamBatchContainer>(TestSerializer.Instance.SerializeToArray(container));
 
-        private static readonly RedisStreamCodec Codec = new(TestSerializer.Instance, RedisStreamPayloadFormat.OrleansCodec);
+        private static readonly RedisStreamCodec Codec = new(TestSerializer.Instance);
 
         private static RedisStreamBatchContainer Decoded(StreamEntry entry)
         {
@@ -124,7 +123,7 @@ namespace RedisStreamsProvider.UnitTests
         }
 
         private static RedisStreamBatchContainer Encoded<T>(T @event, string id = "1-0") =>
-            Decoded(new StreamEntry(id, Codec.Encode(StreamId.Create("testNamespace", "testKey"), @event)));
+            Decoded(new StreamEntry(id, Codec.Encode(StreamId.Create("testNamespace", "testKey"), @event, RedisStreamPayloadFormat.OrleansCodec)));
 
         // A plain class, as earlier versions required: legacy JSON entries need no Orleans serializer.
         private class TestEvent

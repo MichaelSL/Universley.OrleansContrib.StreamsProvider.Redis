@@ -39,6 +39,14 @@ namespace RedisStreamsProvider.UnitTests
         }
 
         [Fact]
+        public void Constructor_Throws_ForAnUndefinedPayloadFormat()
+        {
+            var options = Options.Create(new RedisStreamReceiverOptions { PayloadFormat = (RedisStreamPayloadFormat)42 });
+
+            Assert.Throws<ArgumentOutOfRangeException>(() => new RedisStreamAdapter(_mockDatabase.Object, "TestProvider", _mockQueueMapper.Object, _mockLoggerFactory.Object, options, TestSerializer.Instance));
+        }
+
+        [Fact]
         public void CreateReceiver_ShouldReturnRedisStreamReceiver()
         {
             var queueId = QueueId.GetQueueId("queueName", 0, 1);

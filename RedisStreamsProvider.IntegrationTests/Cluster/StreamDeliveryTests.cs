@@ -44,4 +44,20 @@ public sealed class StreamDeliveryTests(ClusterFixture fixture) : IClassFixture<
             Assert.Equal(Enumerable.Range(0, 10), ReceivedEvents.For(key).Distinct());
         }
     }
+
+    [Fact]
+    public async Task Events_reach_a_grain_that_subscribed_with_an_interface_they_implement()
+    {
+        var key = $"interface-{Guid.NewGuid():N}";
+        var stream = fixture.Cluster.Client.GetStreamProvider(ClusterFixture.ProviderName)
+            .GetStream<CollectedEvent>(StreamId.Create(InterfaceCollectorGrain.StreamNamespace, key));
+
+        for (var i = 0; i < 5; i++)
+        {
+            await stream.OnNextAsync(new CollectedEvent(i));
+        }
+
+        await Eventually.WaitUntilAsync(() => ReceivedEvents.For(key).Distinct().Count() >= 5, TimeSpan.FromSeconds(30));
+        Assert.Equal(Enumerable.Range(0, 5), ReceivedEvents.For(key).Distinct());
+    }
 }

@@ -1,8 +1,10 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Orleans.Configuration;
 using Orleans.Providers.Streams.Common;
 using Orleans.Runtime;
+using Orleans.Serialization;
 using Orleans.Streams;
 using StackExchange.Redis;
 using Universley.OrleansContrib.StreamsProvider.Redis;
@@ -22,8 +24,14 @@ internal sealed class ProviderHarness
             new HashRingStreamQueueMapperOptions { TotalQueueCount = 1 },
             $"it-{Guid.NewGuid():N}");
         QueueId = mapper.GetAllQueues().Single();
-        Adapter = new RedisStreamAdapter(Database, "RedisStream", mapper, NullLoggerFactory.Instance, MsOptions.Create(ReceiverOptions));
+        Adapter = new RedisStreamAdapter(Database, "RedisStream", mapper, NullLoggerFactory.Instance, MsOptions.Create(ReceiverOptions), MsOptions.Create(new RedisStreamPublisherOptions()), Serializer);
     }
+
+    /// <summary>A serializer that knows the event types in this assembly, like the one Orleans gives a silo.</summary>
+    public static Serializer Serializer { get; } = new ServiceCollection()
+        .AddSerializer(serializer => serializer.AddAssembly(typeof(TestEvent).Assembly))
+        .BuildServiceProvider()
+        .GetRequiredService<Serializer>();
 
     public IDatabase Database { get; }
 
@@ -37,13 +45,17 @@ internal sealed class ProviderHarness
 
     public StreamId StreamId { get; } = StreamId.Create("it-namespace", "it-key");
 
-    public RedisStreamReceiver CreateReceiver(TimeProvider? timeProvider = null, ILogger<RedisStreamReceiver>? logger = null) =>
-        new(QueueId, Database, logger ?? NullLogger<RedisStreamReceiver>.Instance, timeProvider, MsOptions.Create(ReceiverOptions));
+    public RedisStreamReceiver CreateReceiver(TimeProvider? timeProvider = null, ILogger<RedisStreamReceiver>? logger = null)
+    {
+        logger ??= NullLogger<RedisStreamReceiver>.Instance;
+        var trimmer = new RedisStreamTrimmer(QueueId, Database, logger, timeProvider ?? TimeProvider.System, ReceiverOptions, new MinIdTrimSupport());
+        return new(QueueId, Database, logger, new RedisStreamCodec(Serializer), trimmer);
+    }
 
     /// <summary>A factory for a provider with one queue, whose stream key no other test uses.</summary>
     public static RedisStreamFactory CreateFactory(IConnectionMultiplexer connection, ILoggerFactory loggerFactory, RedisStreamReceiverOptions receiverOptions) =>
         new(connection, loggerFactory, $"it-{Guid.NewGuid():N}", new RedisStreamFailureHandler(loggerFactory.CreateLogger<RedisStreamFailureHandler>()),
-            new SimpleQueueCacheOptions(), new HashRingStreamQueueMapperOptions { TotalQueueCount = 1 }, MsOptions.Create(receiverOptions));
+            new SimpleQueueCacheOptions(), new HashRingStreamQueueMapperOptions { TotalQueueCount = 1 }, MsOptions.Create(receiverOptions), MsOptions.Create(new RedisStreamPublisherOptions()), Serializer);
 
     public Task PublishAsync<T>(params T[] events) =>
         Adapter.QueueMessageBatchAsync(StreamId, events, null!, new Dictionary<string, object>());

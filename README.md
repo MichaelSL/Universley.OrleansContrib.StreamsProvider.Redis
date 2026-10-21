@@ -149,6 +149,36 @@ services.AddOptions<RedisStreamReceiverOptions>("RedisStream")
     });
 ```
 
+### RedisStreamPublisherOptions
+
+Applies to publishing, from silos and clients alike. Receivers read every payload format, whatever this is set to.
+
+```csharp
+services.AddOptions<RedisStreamPublisherOptions>("RedisStream")
+    .Configure(options =>
+    {
+        // How published events are serialized. Default: OrleansCodec
+        //   OrleansCodec - the Orleans serializer configured on the silo or client, as for grain calls.
+        //   Json         - legacy System.Text.Json format; only for rolling deploys from earlier versions.
+        options.PayloadFormat = RedisStreamPayloadFormat.OrleansCodec;
+    });
+```
+
+## Event Serialization
+
+Events are serialized with the Orleans serializer configured on the silo or client, so event types need the same treatment as grain call arguments:
+
+```csharp
+[GenerateSerializer]
+[Alias("MyApp.OrderPlaced")]
+public sealed record OrderPlaced([property: Id(0)] Guid OrderId, [property: Id(1)] decimal Total) : IOrderEvent;
+```
+
+- Events are kept in Redis until delivered, so give event types an `[Alias]`: renaming or moving a type without one makes entries already in the stream unreadable.
+- To use another format, configure it on the Orleans serializer, for example `AddJsonSerializer` or `AddProtobufSerializer`; this provider uses whatever Orleans uses.
+- A subscriber receives every event assignable to its stream type, so `GetStream<IOrderEvent>` receives `OrderPlaced`.
+- If the Orleans serializer cannot serialize an event, `OnNextAsync` throws and nothing in the call is written.
+
 ## Delivery Guarantees
 
 - **At-least-once.** An entry is acknowledged only after Orleans has delivered it. If a silo stops or crashes, the silo that takes over its queue redelivers everything that was read but not acknowledged. Make consumers idempotent; duplicates are possible.
@@ -156,18 +186,27 @@ services.AddOptions<RedisStreamReceiverOptions>("RedisStream")
 - **Publish failures surface to the producer.** If Redis rejects a write, `OnNextAsync` throws, so the producer can retry. The events of one call are written in a single `MULTI`/`EXEC` transaction, so a failed call normally leaves none of them in the stream. A retry can still duplicate them if the connection drops after Redis applied the write but before its reply arrived.
 - **No silent trimming of undelivered events.** With `TrimStrategy.AcknowledgedOnly`, and the default `Auto` on Redis 6.2 or later, the stream grows while consumers are behind, and a warning is logged once it passes `BacklogWarningLength`. Watch the stream length in Redis (`XLEN`) if memory matters.
 - **Self-healing.** If a stream key disappears (Redis restart without persistence, failover, eviction), the receiver recreates its consumer group and carries on.
-- **Unreadable entries are skipped.** An entry without the expected fields is logged at error level and acknowledged (or, if that acknowledgement fails, retried with the next one), so it cannot block the entries around it.
+- **Unreadable entries are skipped.** An entry without the expected fields, or whose payload the Orleans serializer cannot read (for example an event type the reading silo does not have), is logged at error level and acknowledged (or, if that acknowledgement fails, retried with the next one), so it cannot block the entries around it. Deploy new event types to every silo before publishing them.
 
 ## Limitations
 
-- Events are matched by **short type name**. A subscriber to `GetStream<T>` receives only events whose runtime type has the same `Name` as `T`. Subscribing with a base class or interface receives nothing.
-- Payloads are serialized with `System.Text.Json`, so event types must round-trip through it.
+- Entries in the legacy JSON format (written by earlier versions, or with `PayloadFormat = Json`) are still matched by **short type name**: a subscriber to `GetStream<T>` receives only those whose runtime type has the same `Name` as `T`, and an event whose JSON cannot be deserialized into `T` fails at delivery time and faults the subscription.
 - Orleans `RequestContext` is not carried with events.
 - Streams are not rewindable: subscribers cannot resume from an earlier sequence token.
 - Stream keys are derived only from the provider name and queue number, with no `ServiceId` prefix. Two services or environments that share one Redis database and use the same provider name consume each other's events. Give each its own Redis database or a different provider name.
-- An event whose JSON cannot be deserialized into `T` fails at delivery time; the unreadable-entry handling covers only entries missing required fields. The provider's failure handler then faults the subscription.
 
 ## Upgrading from earlier versions
+
+### Orleans serializer (#3)
+
+Events are now serialized with the Orleans serializer. Silos and clients on earlier versions cannot read entries in the new format: an earlier version that reads one fails its delivery and faults the subscription. For a rolling deploy:
+
+1. Deploy this version with `RedisStreamPublisherOptions.PayloadFormat = RedisStreamPayloadFormat.Json` on every silo and client.
+2. Once nothing older reads the same Redis streams, remove the setting (or set `OrleansCodec`) and deploy again.
+
+Event types must be serializable by Orleans: mark them `[GenerateSerializer]` with `[Id]` members (see [Event Serialization](#event-serialization)), or register a fallback serializer such as `AddJsonSerializer`. Entries already in Redis in the JSON format are still delivered.
+
+### Production hardening
 
 The first receiver on this version drains each queue's whole pending list before reading new entries. Events that earlier versions left stuck there are delivered late, and possibly out of order relative to newer events. Entries that were trimmed while still pending are logged at error level and skipped.
 

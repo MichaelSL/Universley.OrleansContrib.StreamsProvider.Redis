@@ -1,5 +1,4 @@
 ﻿using Orleans.Streams;
-using StackExchange.Redis;
 using System.Text.Json;
 
 namespace Universley.OrleansContrib.StreamsProvider.Redis
@@ -13,49 +12,36 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
 
         [Id(1)]
         public StreamSequenceToken SequenceToken { get; }
-        
-        [Id(2)]
-        public string EventType { get; }
-        
-        [Id(3)]
-        public string Data { get; } 
-        
+
         [Id(4)]
         public string StreamEntryId { get; }
-        
-        /// <exception cref="ArgumentException"><paramref name="streamEntry"/> was not written by this provider.</exception>
-        public RedisStreamBatchContainer(StreamEntry streamEntry)
-        {
-            if (!RedisStreamWireFormat.TryDecode(streamEntry, out var decoded))
-            {
-                throw new ArgumentException($"Stream entry {streamEntry.Id} is not an event written by this provider", nameof(streamEntry));
-            }
 
-            StreamId = decoded.StreamId;
-            SequenceToken = decoded.SequenceToken;
-            EventType = decoded.EventType;
-            Data = decoded.Data;
-            StreamEntryId = decoded.StreamEntryId;
-        }
+        /// <summary>The event, or a <see cref="RedisStreamLegacyJsonEvent"/> for an entry in the legacy JSON format.</summary>
+        [Id(5)]
+        internal object Event { get; }
 
-        internal RedisStreamBatchContainer(StreamId streamId, RedisStreamSequenceToken sequenceToken, string eventType, string data, string streamEntryId)
+        internal RedisStreamBatchContainer(StreamId streamId, RedisStreamSequenceToken sequenceToken, object @event, string streamEntryId)
         {
             StreamId = streamId;
             SequenceToken = sequenceToken;
-            EventType = eventType;
-            Data = data;
+            Event = @event;
             StreamEntryId = streamEntryId;
         }
 
         public IEnumerable<Tuple<T, StreamSequenceToken>> GetEvents<T>()
         {
             List<Tuple<T, StreamSequenceToken>> events = new();
-            var eventType = typeof(T).Name;
-            if (eventType == EventType)
+            switch (Event)
             {
-                var data = Data;
-                var @event = JsonSerializer.Deserialize<T>(data);
-                events.Add(new(@event!, SequenceToken));
+                case RedisStreamLegacyJsonEvent legacy:
+                    if (legacy.TypeName == typeof(T).Name)
+                    {
+                        events.Add(new(JsonSerializer.Deserialize<T>(legacy.Json)!, SequenceToken));
+                    }
+                    break;
+                case T @event:
+                    events.Add(new(@event, SequenceToken));
+                    break;
             }
             return events;
         }

@@ -2,6 +2,7 @@
 using Microsoft.Extensions.Logging;
 using Orleans.Configuration;
 using Orleans.Providers.Streams.Common;
+using Orleans.Serialization;
 using Orleans.Streams;
 using StackExchange.Redis;
 using Microsoft.Extensions.Options;
@@ -17,6 +18,8 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         private readonly SimpleQueueCacheOptions _simpleQueueCacheOptions;
         private readonly HashRingBasedStreamQueueMapper _hashRingBasedStreamQueueMapper;
         private readonly IOptions<RedisStreamReceiverOptions> _receiverOptions;
+        private readonly IOptions<RedisStreamPublisherOptions> _publisherOptions;
+        private readonly Serializer _serializer;
 
         public RedisStreamFactory(IConnectionMultiplexer connectionMultiplexer,
             ILoggerFactory loggerFactory,
@@ -24,7 +27,9 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             IStreamFailureHandler streamFailureHandler,
             SimpleQueueCacheOptions simpleQueueCacheOptions,
             HashRingStreamQueueMapperOptions hashRingStreamQueueMapperOptions,
-            IOptions<RedisStreamReceiverOptions> receiverOptions)
+            IOptions<RedisStreamReceiverOptions> receiverOptions,
+            IOptions<RedisStreamPublisherOptions> publisherOptions,
+            Serializer serializer)
         {
             if (hashRingStreamQueueMapperOptions is null)
             {
@@ -38,6 +43,8 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             _simpleQueueCacheOptions = simpleQueueCacheOptions ?? throw new ArgumentNullException(nameof(simpleQueueCacheOptions));
             _hashRingBasedStreamQueueMapper = new HashRingBasedStreamQueueMapper(hashRingStreamQueueMapperOptions, providerName);
             _receiverOptions = receiverOptions ?? throw new ArgumentNullException(nameof(receiverOptions));
+            _publisherOptions = publisherOptions ?? throw new ArgumentNullException(nameof(publisherOptions));
+            _serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
         }
 
         public static IQueueAdapterFactory Create(IServiceProvider provider, string providerName)
@@ -47,8 +54,10 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             var simpleQueueCacheOptions = provider.GetOptionsByName<SimpleQueueCacheOptions>(providerName);
             var hashRingStreamQueueMapperOptions = provider.GetOptionsByName<HashRingStreamQueueMapperOptions>(providerName);
             var receiverOptions = Options.Create(provider.GetOptionsByName<RedisStreamReceiverOptions>(providerName));
+            var publisherOptions = Options.Create(provider.GetOptionsByName<RedisStreamPublisherOptions>(providerName));
+            var serializer = provider.GetRequiredService<Serializer>();
             var streamFailureHandler = new RedisStreamFailureHandler(loggerFactory.CreateLogger<RedisStreamFailureHandler>());
-            return new RedisStreamFactory(connMuliplexer, loggerFactory, providerName, streamFailureHandler, simpleQueueCacheOptions, hashRingStreamQueueMapperOptions, receiverOptions);
+            return new RedisStreamFactory(connMuliplexer, loggerFactory, providerName, streamFailureHandler, simpleQueueCacheOptions, hashRingStreamQueueMapperOptions, receiverOptions, publisherOptions, serializer);
         }
 
         public async Task<IQueueAdapter> CreateAdapter()
@@ -59,7 +68,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
                 await minIdTrimSupport.DetectAsync(_connectionMultiplexer, _loggerFactory.CreateLogger<RedisStreamFactory>());
             }
 
-            return new RedisStreamAdapter(_connectionMultiplexer.GetDatabase(), _providerName, _hashRingBasedStreamQueueMapper, _loggerFactory, _receiverOptions, minIdTrimSupport);
+            return new RedisStreamAdapter(_connectionMultiplexer.GetDatabase(), _providerName, _hashRingBasedStreamQueueMapper, _loggerFactory, _receiverOptions, _publisherOptions, _serializer, minIdTrimSupport);
         }
 
         public Task<IStreamFailureHandler> GetDeliveryFailureHandler(QueueId queueId)

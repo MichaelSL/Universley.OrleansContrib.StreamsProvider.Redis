@@ -1,5 +1,4 @@
 ﻿using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using Orleans.Streams;
 using StackExchange.Redis;
 
@@ -15,6 +14,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         private readonly string _streamKey;
         private readonly IDatabase _database;
         private readonly ILogger<RedisStreamReceiver> _logger;
+        private readonly RedisStreamCodec _codec;
         private RedisStreamTrimmer _trimmer;
 
         // The next three fields track where this receiver stands in one incarnation of the stream key, and
@@ -33,22 +33,13 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         // The read or acknowledgement in progress, which Shutdown waits for. Neither ever faults.
         private Task _inFlight = Task.CompletedTask;
 
-        public RedisStreamReceiver(QueueId queueId,
-                                 IDatabase database,
-                                 ILogger<RedisStreamReceiver> logger,
-                                 TimeProvider? timeProvider = null,
-                                 IOptions<RedisStreamReceiverOptions>? receiverOptions = null)
-            : this(queueId, database, logger, new RedisStreamTrimmer(queueId, database, logger, timeProvider ?? TimeProvider.System,
-                receiverOptions?.Value ?? new RedisStreamReceiverOptions(), new MinIdTrimSupport()))
-        {
-        }
-
-        internal RedisStreamReceiver(QueueId queueId, IDatabase database, ILogger<RedisStreamReceiver> logger, RedisStreamTrimmer trimmer)
+        internal RedisStreamReceiver(QueueId queueId, IDatabase database, ILogger<RedisStreamReceiver> logger, RedisStreamCodec codec, RedisStreamTrimmer trimmer)
         {
             _queueId = queueId;
             _streamKey = RedisStreamWireFormat.StreamKey(queueId);
             _database = database ?? throw new ArgumentNullException(nameof(database));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _codec = codec;
             _trimmer = trimmer;
         }
 
@@ -120,15 +111,16 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             unreadable = [];
             foreach (var entry in entries)
             {
-                if (RedisStreamWireFormat.TryDecode(entry, out var batch))
+                try
                 {
-                    batches.Add(batch);
+                    batches.Add(_codec.Decode(entry));
                 }
-                else
+                catch (RedisStreamUnreadableEntryException error)
                 {
                     // This entry can never be delivered, and leaving it pending would keep it (and everything read
-                    // with it) stuck.
-                    _logger.LogError("Acknowledging unreadable entry {EntryId} in stream {QueueId} without delivering it", entry.Id, _queueId);
+                    // with it) stuck. Any other error fails the whole read and leaves its entries pending, for the
+                    // next owner of the queue to read again.
+                    _logger.LogError(error, "Acknowledging unreadable entry {EntryId} in stream {QueueId} without delivering it", entry.Id, _queueId);
                     unreadable.Add(entry.Id);
                 }
             }

@@ -27,7 +27,7 @@ namespace RedisStreamsProvider.UnitTests
             _mockLoggerFactory.Setup(factory => factory.CreateLogger(It.IsAny<string>())).Returns(_mockLogger.Object);
             _mockReceiverOptions = new Mock<IOptions<RedisStreamReceiverOptions>>();
             _mockReceiverOptions.Setup(o => o.Value).Returns(new RedisStreamReceiverOptions()); // Provide default options
-            _adapter = new RedisStreamAdapter(_mockDatabase.Object, "TestProvider", _mockQueueMapper.Object, _mockLoggerFactory.Object, _mockReceiverOptions.Object, TestSerializer.Instance);
+            _adapter = new RedisStreamAdapter(_mockDatabase.Object, "TestProvider", _mockQueueMapper.Object, _mockLoggerFactory.Object, _mockReceiverOptions.Object, Options.Create(new RedisStreamPublisherOptions()), TestSerializer.Instance);
         }
 
         [Fact]
@@ -39,11 +39,9 @@ namespace RedisStreamsProvider.UnitTests
         }
 
         [Fact]
-        public void Constructor_Throws_ForAnUndefinedPayloadFormat()
+        public void Constructor_Throws_WhenPublisherOptionsIsNull()
         {
-            var options = Options.Create(new RedisStreamReceiverOptions { PayloadFormat = (RedisStreamPayloadFormat)42 });
-
-            Assert.Throws<ArgumentOutOfRangeException>(() => new RedisStreamAdapter(_mockDatabase.Object, "TestProvider", _mockQueueMapper.Object, _mockLoggerFactory.Object, options, TestSerializer.Instance));
+            Assert.Throws<ArgumentNullException>(() => new RedisStreamAdapter(_mockDatabase.Object, "TestProvider", _mockQueueMapper.Object, _mockLoggerFactory.Object, _mockReceiverOptions.Object, null!, TestSerializer.Instance));
         }
 
         [Fact]

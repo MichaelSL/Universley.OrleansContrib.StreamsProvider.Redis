@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace Universley.OrleansContrib.StreamsProvider.Redis
 {
     /// <summary>
@@ -6,7 +8,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
     /// </summary>
     [GenerateSerializer]
     [Alias("Universley.OrleansContrib.StreamsProvider.Redis.RedisStreamEventBody")]
-    internal sealed class RedisStreamEventBody
+    internal sealed class RedisStreamEventBody : IRedisStreamEvent
     {
         public RedisStreamEventBody(object @event)
         {
@@ -15,5 +17,17 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
 
         [Id(0)]
         public object Event { get; }
+
+        /// <summary>The event, for a subscriber to any type it is assignable to.</summary>
+        public bool TryRead<T>([MaybeNullWhen(false)] out T @event)
+        {
+            if (Event is T read)
+            {
+                @event = read;
+                return true;
+            }
+            @event = default;
+            return false;
+        }
     }
 }

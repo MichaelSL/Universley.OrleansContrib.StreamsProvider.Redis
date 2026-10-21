@@ -8,7 +8,7 @@ Events are serialized with the Orleans serializer instead of `System.Text.Json` 
 
 ### Upgrade notes
 
-- **Silos and clients on earlier versions cannot read the new format.** During a rolling deploy, set `PayloadFormat = RedisStreamPayloadFormat.Json` on every silo and client running this version, and switch it back to `OrleansCodec` (the default) once nothing older reads the same Redis streams. An earlier version that reads an entry in the new format fails delivery of it and faults the subscription.
+- **Silos and clients on earlier versions cannot read the new format.** During a rolling deploy, set `RedisStreamPublisherOptions.PayloadFormat = RedisStreamPayloadFormat.Json` on every silo and client running this version, and switch it back to `OrleansCodec` (the default) once nothing older reads the same Redis streams. An earlier version that reads an entry in the new format fails delivery of it and faults the subscription.
 - **Event types must be serializable by Orleans**, like grain call arguments: mark them `[GenerateSerializer]` with `[Id]` on their members, or register a fallback such as `AddJsonSerializer`. Publishing an event Orleans cannot serialize throws from `OnNextAsync`, and nothing in the call is written.
 - **Event types are now stored in Redis by their Orleans type name.** Renaming or moving an event type makes entries still in the stream unreadable; give event types an `[Alias]` so they can be renamed safely.
 - **Delivery is by type, not by short type name.** Subscribers to a base class or interface now receive the events that derive from or implement it, and events whose types merely share a short name (`Envelope<int>` and `Envelope<string>`, or `Foo` in two namespaces) are no longer delivered to each other's subscribers.
@@ -16,12 +16,12 @@ Events are serialized with the Orleans serializer instead of `System.Text.Json` 
 
 ### Added
 
-- `RedisStreamReceiverOptions.PayloadFormat`, with `OrleansCodec` (default) and the legacy `Json`. It applies to publishing; receivers read both formats. An undefined value throws when the adapter is created.
+- `RedisStreamPublisherOptions`, configured by provider name like `RedisStreamReceiverOptions`, with `PayloadFormat`: `OrleansCodec` (default) or the legacy `Json`. Receivers read both formats. Setting an undefined value throws.
 
 ### Changed
 
 - A payload the Orleans serializer cannot read, or an entry in a payload format this version does not know, is treated as an unreadable entry: logged at error level with the exception, acknowledged and skipped, instead of faulting the subscription at delivery.
-- `RedisStreamFactory` and `RedisStreamAdapter` take the Orleans `Serializer`. `RedisStreamFactory.Create` resolves it from the service provider, so configuration through `AddPersistentStreams` is unchanged.
+- `RedisStreamFactory` and `RedisStreamAdapter` take `IOptions<RedisStreamPublisherOptions>` and the Orleans `Serializer`. `RedisStreamFactory.Create` resolves it from the service provider, so configuration through `AddPersistentStreams` is unchanged.
 - The unreadable-entry error log now says why the entry could not be read, such as which field is missing.
 
 ### Removed

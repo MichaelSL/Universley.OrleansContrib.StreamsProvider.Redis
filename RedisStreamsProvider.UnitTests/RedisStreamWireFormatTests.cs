@@ -29,11 +29,5 @@ namespace RedisStreamsProvider.UnitTests
 
             Assert.Equal(queueId.ToString(), RedisStreamWireFormat.StreamKey(queueId));
         }
-
-        [Fact]
-        public void PayloadFormat_DefaultsToOrleansCodec()
-        {
-            Assert.Equal(RedisStreamPayloadFormat.OrleansCodec, new RedisStreamReceiverOptions().PayloadFormat);
-        }
     }
 }

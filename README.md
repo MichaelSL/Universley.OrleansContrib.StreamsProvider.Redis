@@ -146,7 +146,18 @@ services.AddOptions<RedisStreamReceiverOptions>("RedisStream")
         options.MaxStreamLength = 1000;
         // Interval in minutes between stream trim operations. Default: 5
         options.TrimTimeMinutes = 5;
-        // How published events are serialized. Receivers read both formats. Default: OrleansCodec
+    });
+```
+
+### RedisStreamPublisherOptions
+
+Applies to publishing, from silos and clients alike. Receivers read every payload format, whatever this is set to.
+
+```csharp
+services.AddOptions<RedisStreamPublisherOptions>("RedisStream")
+    .Configure(options =>
+    {
+        // How published events are serialized. Default: OrleansCodec
         //   OrleansCodec - the Orleans serializer configured on the silo or client, as for grain calls.
         //   Json         - legacy System.Text.Json format; only for rolling deploys from earlier versions.
         options.PayloadFormat = RedisStreamPayloadFormat.OrleansCodec;
@@ -190,7 +201,7 @@ public sealed record OrderPlaced([property: Id(0)] Guid OrderId, [property: Id(1
 
 Events are now serialized with the Orleans serializer. Silos and clients on earlier versions cannot read entries in the new format: an earlier version that reads one fails its delivery and faults the subscription. For a rolling deploy:
 
-1. Deploy this version with `options.PayloadFormat = RedisStreamPayloadFormat.Json` on every silo and client.
+1. Deploy this version with `RedisStreamPublisherOptions.PayloadFormat = RedisStreamPayloadFormat.Json` on every silo and client.
 2. Once nothing older reads the same Redis streams, remove the setting (or set `OrleansCodec`) and deploy again.
 
 Event types must be serializable by Orleans: mark them `[GenerateSerializer]` with `[Id]` members (see [Event Serialization](#event-serialization)), or register a fallback serializer such as `AddJsonSerializer`. Entries already in Redis in the JSON format are still delivered.

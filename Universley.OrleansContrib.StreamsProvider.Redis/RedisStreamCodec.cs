@@ -1,4 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Orleans.Serialization;
 using StackExchange.Redis;
@@ -40,29 +39,13 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             _ => throw new ArgumentOutOfRangeException(nameof(format), format, null),
         };
 
-        /// <summary>
-        /// Reads an entry written by <see cref="Encode"/> in either format. Fails, with <paramref name="error"/> saying
-        /// why, for an entry with a missing field or a malformed id, such as one deleted while still pending, which
-        /// comes back with no fields, for an entry in a format this version does not know, and for an
-        /// <see cref="RedisStreamPayloadFormat.OrleansCodec"/> payload the serializer cannot read.
-        /// </summary>
-        public bool TryDecode(StreamEntry entry, [NotNullWhen(true)] out RedisStreamBatchContainer? batch, [NotNullWhen(false)] out Exception? error)
-        {
-            try
-            {
-                batch = Decode(entry);
-                error = null;
-                return true;
-            }
-            catch (Exception ex)
-            {
-                batch = null;
-                error = ex;
-                return false;
-            }
-        }
-
-        private RedisStreamBatchContainer Decode(StreamEntry entry)
+        /// <summary>Reads an entry written by <see cref="Encode"/> in either format.</summary>
+        /// <exception cref="Exception">
+        /// The entry cannot be read: it has a missing field or a malformed id, such as one deleted while still pending,
+        /// which comes back with no fields; it is in a format this version does not know; or the serializer cannot read
+        /// its <see cref="RedisStreamPayloadFormat.OrleansCodec"/> payload.
+        /// </exception>
+        public RedisStreamBatchContainer Decode(StreamEntry entry)
         {
             if (!RedisStreamSequenceToken.TryParse(entry.Id, out var sequenceNumber, out var eventIndex))
             {
@@ -70,10 +53,10 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             }
 
             var streamId = StreamId.Create(Text(entry, StreamNamespaceField), Text(entry, StreamKeyField));
-            object @event = (string?)entry[FormatField] switch
+            IRedisStreamEvent @event = (string?)entry[FormatField] switch
             {
                 null => new RedisStreamLegacyJsonEvent(Text(entry, EventTypeField), Text(entry, DataField)),
-                OrleansCodecFormat => _serializer.Deserialize<RedisStreamEventBody>((byte[])Field(entry, DataField)!).Event,
+                OrleansCodecFormat => _serializer.Deserialize<RedisStreamEventBody>((byte[])Field(entry, DataField)!),
                 // Written by a later version; reading it as JSON would fault the subscription at delivery.
                 var format => throw new FormatException($"Stream entry {entry.Id} has unknown format {format}"),
             };

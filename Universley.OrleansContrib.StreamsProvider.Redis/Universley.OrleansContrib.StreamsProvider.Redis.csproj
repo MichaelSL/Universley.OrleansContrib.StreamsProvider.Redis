@@ -6,7 +6,7 @@
 		<Nullable>enable</Nullable>
 		<AnalysisLevel>latest-recommended</AnalysisLevel>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
-		<PackageReleaseNotes>Breaking: events are serialized with the Orleans serializer instead of System.Text.Json, and delivered to every subscriber whose stream type they are assignable to. Event types must be serializable by Orleans ([GenerateSerializer], or a fallback such as AddJsonSerializer). Earlier versions cannot read the new format: for a rolling deploy set RedisStreamReceiverOptions.PayloadFormat = Json until every silo and client is upgraded. Entries already in Redis are still delivered. Full notes and upgrade guidance: https://github.com/MichaelSL/Universley.OrleansContrib.StreamsProvider.Redis/blob/main/CHANGELOG.md</PackageReleaseNotes>
+		<PackageReleaseNotes>Breaking: events are serialized with the Orleans serializer instead of System.Text.Json, and delivered to every subscriber whose stream type they are assignable to. Event types must be serializable by Orleans ([GenerateSerializer], or a fallback such as AddJsonSerializer). Earlier versions cannot read the new format: for a rolling deploy set RedisStreamPublisherOptions.PayloadFormat = Json until every silo and client is upgraded. Entries already in Redis are still delivered. Full notes and upgrade guidance: https://github.com/MichaelSL/Universley.OrleansContrib.StreamsProvider.Redis/blob/main/CHANGELOG.md</PackageReleaseNotes>
 	</PropertyGroup>
 
 	<ItemGroup>

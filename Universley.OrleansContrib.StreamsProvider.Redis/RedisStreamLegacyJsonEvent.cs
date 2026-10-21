@@ -10,7 +10,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
     /// </summary>
     [GenerateSerializer]
     [Alias("Universley.OrleansContrib.StreamsProvider.Redis.RedisStreamLegacyJsonEvent")]
-    internal sealed record RedisStreamLegacyJsonEvent([property: Id(0)] string TypeName, [property: Id(1)] string Json)
+    internal sealed record RedisStreamLegacyJsonEvent([property: Id(0)] string TypeName, [property: Id(1)] string Json) : IRedisStreamEvent
     {
         /// <summary>Deserializes the event for a subscriber to <typeparamref name="T"/>, if its short name matches.</summary>
         /// <exception cref="JsonException">The JSON cannot be deserialized into <typeparamref name="T"/>.</exception>

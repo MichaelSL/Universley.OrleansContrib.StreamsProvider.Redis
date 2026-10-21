@@ -23,8 +23,9 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
                                 HashRingBasedStreamQueueMapper hashRingBasedStreamQueueMapper,
                                 ILoggerFactory loggerFactory,
                                 IOptions<RedisStreamReceiverOptions> receiverOptions,
+                                IOptions<RedisStreamPublisherOptions> publisherOptions,
                                 Serializer serializer)
-            : this(database, providerName, hashRingBasedStreamQueueMapper, loggerFactory, receiverOptions, serializer, new MinIdTrimSupport())
+            : this(database, providerName, hashRingBasedStreamQueueMapper, loggerFactory, receiverOptions, publisherOptions, serializer, new MinIdTrimSupport())
         {
         }
 
@@ -34,6 +35,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
                                 HashRingBasedStreamQueueMapper hashRingBasedStreamQueueMapper,
                                 ILoggerFactory loggerFactory,
                                 IOptions<RedisStreamReceiverOptions> receiverOptions,
+                                IOptions<RedisStreamPublisherOptions> publisherOptions,
                                 Serializer serializer,
                                 MinIdTrimSupport minIdTrimSupport)
         {
@@ -44,9 +46,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             _logger = loggerFactory.CreateLogger<RedisStreamAdapter>();
             _receiverOptions = receiverOptions ?? throw new ArgumentNullException(nameof(receiverOptions));
             _codec = new RedisStreamCodec(serializer);
-            _payloadFormat = Enum.IsDefined(receiverOptions.Value.PayloadFormat)
-                ? receiverOptions.Value.PayloadFormat
-                : throw new ArgumentOutOfRangeException(nameof(receiverOptions), receiverOptions.Value.PayloadFormat, "Unknown PayloadFormat");
+            _payloadFormat = (publisherOptions ?? throw new ArgumentNullException(nameof(publisherOptions))).Value.PayloadFormat;
             _minIdTrimSupport = minIdTrimSupport;
         }
 

@@ -24,7 +24,7 @@ internal sealed class ProviderHarness
             new HashRingStreamQueueMapperOptions { TotalQueueCount = 1 },
             $"it-{Guid.NewGuid():N}");
         QueueId = mapper.GetAllQueues().Single();
-        Adapter = new RedisStreamAdapter(Database, "RedisStream", mapper, NullLoggerFactory.Instance, MsOptions.Create(ReceiverOptions), Serializer);
+        Adapter = new RedisStreamAdapter(Database, "RedisStream", mapper, NullLoggerFactory.Instance, MsOptions.Create(ReceiverOptions), MsOptions.Create(new RedisStreamPublisherOptions()), Serializer);
     }
 
     /// <summary>A serializer that knows the event types in this assembly, like the one Orleans gives a silo.</summary>
@@ -55,7 +55,7 @@ internal sealed class ProviderHarness
     /// <summary>A factory for a provider with one queue, whose stream key no other test uses.</summary>
     public static RedisStreamFactory CreateFactory(IConnectionMultiplexer connection, ILoggerFactory loggerFactory, RedisStreamReceiverOptions receiverOptions) =>
         new(connection, loggerFactory, $"it-{Guid.NewGuid():N}", new RedisStreamFailureHandler(loggerFactory.CreateLogger<RedisStreamFailureHandler>()),
-            new SimpleQueueCacheOptions(), new HashRingStreamQueueMapperOptions { TotalQueueCount = 1 }, MsOptions.Create(receiverOptions), Serializer);
+            new SimpleQueueCacheOptions(), new HashRingStreamQueueMapperOptions { TotalQueueCount = 1 }, MsOptions.Create(receiverOptions), MsOptions.Create(new RedisStreamPublisherOptions()), Serializer);
 
     public Task PublishAsync<T>(params T[] events) =>
         Adapter.QueueMessageBatchAsync(StreamId, events, null!, new Dictionary<string, object>());

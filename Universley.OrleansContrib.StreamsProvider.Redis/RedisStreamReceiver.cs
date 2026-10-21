@@ -111,11 +111,11 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             unreadable = [];
             foreach (var entry in entries)
             {
-                if (_codec.TryDecode(entry, out var batch, out var error))
+                try
                 {
-                    batches.Add(batch);
+                    batches.Add(_codec.Decode(entry));
                 }
-                else
+                catch (Exception error)
                 {
                     // This entry can never be delivered, and leaving it pending would keep it (and everything read
                     // with it) stuck.

@@ -25,11 +25,5 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
 
         /// <summary>How entries are removed from the stream.</summary>
         public RedisStreamTrimStrategy TrimStrategy { get; set; } = RedisStreamTrimStrategy.Auto;
-
-        /// <summary>
-        /// How published events are serialized. Applies to publishing, from silos and clients alike; receivers read both
-        /// formats.
-        /// </summary>
-        public RedisStreamPayloadFormat PayloadFormat { get; set; } = RedisStreamPayloadFormat.OrleansCodec;
     }
 }

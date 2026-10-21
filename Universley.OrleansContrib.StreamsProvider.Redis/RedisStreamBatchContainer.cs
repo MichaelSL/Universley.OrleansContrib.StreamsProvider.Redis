@@ -15,11 +15,10 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         [Id(4)]
         public string StreamEntryId { get; }
 
-        /// <summary>The event, or a <see cref="RedisStreamLegacyJsonEvent"/> for an entry in the legacy JSON format.</summary>
         [Id(5)]
-        internal object Event { get; }
+        internal IRedisStreamEvent Event { get; }
 
-        internal RedisStreamBatchContainer(StreamId streamId, RedisStreamSequenceToken sequenceToken, object @event, string streamEntryId)
+        internal RedisStreamBatchContainer(StreamId streamId, RedisStreamSequenceToken sequenceToken, IRedisStreamEvent @event, string streamEntryId)
         {
             StreamId = streamId;
             SequenceToken = sequenceToken;
@@ -29,11 +28,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
 
         public IEnumerable<Tuple<T, StreamSequenceToken>> GetEvents<T>()
         {
-            if (Event is RedisStreamLegacyJsonEvent legacy)
-            {
-                return legacy.TryRead<T>(out var read) ? [new(read, SequenceToken)] : [];
-            }
-            return Event is T @event ? [new(@event, SequenceToken)] : [];
+            return Event.TryRead<T>(out var @event) ? [new(@event, SequenceToken)] : [];
         }
 
         public bool ImportRequestContext()

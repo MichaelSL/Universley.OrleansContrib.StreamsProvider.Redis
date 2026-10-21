@@ -23,7 +23,7 @@ namespace RedisStreamsProvider.UnitTests
             var options = new RedisStreamReceiverOptions { TrimTimeMinutes = 1, TrimStrategy = RedisStreamTrimStrategy.MaxLength };
             var trimmer = new RedisStreamTrimmer(_queueId, _mockDatabase.Object, _mockLogger.Object, time, options, new MinIdTrimSupport());
             time.Advance(TimeSpan.FromMinutes(2));
-            return new RedisStreamReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object, TestSerializer.Instance, trimmer);
+            return new RedisStreamReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object, new RedisStreamCodec(TestSerializer.Instance, RedisStreamPayloadFormat.OrleansCodec), trimmer);
         }
 
         private ISetup<IDatabase, Task<long>> SetupMaxLengthTrim() =>
@@ -45,7 +45,8 @@ namespace RedisStreamsProvider.UnitTests
         ]);
 
         private static List<IBatchContainer> Delivered(params string[] ids) =>
-            ids.Select(id => (IBatchContainer)new RedisStreamBatchContainer(Entry(id), TestSerializer.Instance)).ToList();
+            ids.Select(id => (IBatchContainer)new RedisStreamBatchContainer(StreamId.Create("testNamespace", "testKey"),
+                new RedisStreamSequenceToken(id), new RedisStreamLegacyJsonEvent("testEventType", "testData"), id)).ToList();
 
         private static string[] Ids(IList<IBatchContainer>? batches) =>
             batches!.Cast<RedisStreamBatchContainer>().Select(b => b.StreamEntryId).ToArray();

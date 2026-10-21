@@ -1,4 +1,5 @@
 ﻿using Orleans.Runtime;
+using Orleans.Serialization;
 using StackExchange.Redis;
 using System.Text.Json;
 using Universley.OrleansContrib.StreamsProvider.Redis;
@@ -8,7 +9,7 @@ namespace RedisStreamsProvider.UnitTests
     public class RedisStreamBatchContainerTests
     {
         [Fact]
-        public void Constructor_ShouldInitializeProperties()
+        public void Decode_ShouldInitializeProperties()
         {
             // Arrange
             var streamEntry = new StreamEntry("1-0", new NameValueEntry[]
@@ -20,7 +21,7 @@ namespace RedisStreamsProvider.UnitTests
             });
 
             // Act
-            var container = new RedisStreamBatchContainer(streamEntry, TestSerializer.Instance);
+            var container = Decoded(streamEntry);
 
             // Assert
             Assert.Equal("testNamespace", container.StreamId.GetNamespace());
@@ -39,7 +40,7 @@ namespace RedisStreamsProvider.UnitTests
                         new NameValueEntry(RedisStreamWireFormat.EventTypeField, "TestEvent"),
                         new NameValueEntry(RedisStreamWireFormat.DataField, JsonSerializer.Serialize(new TestEvent { Id = 1, Name = "Test" }))
             });
-            var container = new RedisStreamBatchContainer(streamEntry, TestSerializer.Instance);
+            var container = Decoded(streamEntry);
 
             // Act
             var events = container.GetEvents<TestEvent>().ToList();
@@ -62,29 +63,13 @@ namespace RedisStreamsProvider.UnitTests
                         new NameValueEntry(RedisStreamWireFormat.EventTypeField, "TestEvent"),
                         new NameValueEntry(RedisStreamWireFormat.DataField, JsonSerializer.Serialize(new TestEvent { Id = 1, Name = "Test" }))
             });
-            var container = new RedisStreamBatchContainer(streamEntry, TestSerializer.Instance);
+            var container = Decoded(streamEntry);
 
             // Act
             var result = container.ImportRequestContext();
 
             // Assert
             Assert.False(result);
-        }
-
-        [Fact]
-        public void Constructor_ShouldThrowArgumentException_ForInvalidStreamEntry()
-        {
-            // Arrange
-            var invalidStreamEntry = new StreamEntry("1-0", new NameValueEntry[]
-            {
-                new NameValueEntry(RedisStreamWireFormat.StreamNamespaceField, ""),
-                new NameValueEntry(RedisStreamWireFormat.StreamKeyField, ""),
-                new NameValueEntry(RedisStreamWireFormat.EventTypeField, ""),
-                new NameValueEntry(RedisStreamWireFormat.DataField, "")
-            });
-
-            // Act & Assert
-            Assert.Throws<ArgumentException>(() => new RedisStreamBatchContainer(invalidStreamEntry, TestSerializer.Instance));
         }
 
         [Fact]
@@ -115,22 +100,31 @@ namespace RedisStreamsProvider.UnitTests
         }
 
         [Fact]
-        public void Constructor_ShouldThrowArgumentException_WithTheCause_ForAPayloadTheSerializerCannotRead()
+        public void RoundTripsThroughTheOrleansSerializer_AsWhenDeliveredToAConsumerOnAnotherSilo()
         {
-            var entry = new StreamEntry("1-0", [
-                new(RedisStreamWireFormat.StreamNamespaceField, "testNamespace"),
-                new(RedisStreamWireFormat.StreamKeyField, "testKey"),
-                new(RedisStreamWireFormat.FormatField, RedisStreamWireFormat.OrleansCodecFormat),
-                new(RedisStreamWireFormat.DataField, new byte[] { 0xff, 0xfe, 0x01 }),
-            ]);
+            var orleans = RoundTrip(Encoded(new UnitTests.TestEvent(1, "one"), "5-3"));
+            var legacy = RoundTrip(Decoded(new StreamEntry("1-0", new RedisStreamCodec(TestSerializer.Instance, RedisStreamPayloadFormat.Json)
+                .Encode(StreamId.Create("testNamespace", "testKey"), new UnitTests.TestEvent(2, "two")))));
 
-            var exception = Assert.Throws<ArgumentException>(() => new RedisStreamBatchContainer(entry, TestSerializer.Instance));
-            Assert.NotNull(exception.InnerException);
+            Assert.Equal("5-3", orleans.StreamEntryId);
+            Assert.Equal(new RedisStreamSequenceToken(5, 3), orleans.SequenceToken);
+            Assert.Equal(new UnitTests.TestEvent(1, "one"), Assert.Single(orleans.GetEvents<UnitTests.TestEvent>()).Item1);
+            Assert.Equal(new UnitTests.TestEvent(2, "two"), Assert.Single(legacy.GetEvents<UnitTests.TestEvent>()).Item1);
+        }
+
+        private static RedisStreamBatchContainer RoundTrip(RedisStreamBatchContainer container) =>
+            TestSerializer.Instance.Deserialize<RedisStreamBatchContainer>(TestSerializer.Instance.SerializeToArray(container));
+
+        private static readonly RedisStreamCodec Codec = new(TestSerializer.Instance, RedisStreamPayloadFormat.OrleansCodec);
+
+        private static RedisStreamBatchContainer Decoded(StreamEntry entry)
+        {
+            Assert.True(Codec.TryDecode(entry, out var batch, out var error), error?.ToString());
+            return batch;
         }
 
         private static RedisStreamBatchContainer Encoded<T>(T @event, string id = "1-0") =>
-            new(new StreamEntry(id, RedisStreamWireFormat.Encode(StreamId.Create("testNamespace", "testKey"), @event,
-                RedisStreamPayloadFormat.OrleansCodec, TestSerializer.Instance)), TestSerializer.Instance);
+            Decoded(new StreamEntry(id, Codec.Encode(StreamId.Create("testNamespace", "testKey"), @event)));
 
         // A plain class, as earlier versions required: legacy JSON entries need no Orleans serializer.
         private class TestEvent

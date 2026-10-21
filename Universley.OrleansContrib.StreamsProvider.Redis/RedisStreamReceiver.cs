@@ -16,7 +16,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         private readonly string _streamKey;
         private readonly IDatabase _database;
         private readonly ILogger<RedisStreamReceiver> _logger;
-        private readonly Serializer _serializer;
+        private readonly RedisStreamCodec _codec;
         private RedisStreamTrimmer _trimmer;
 
         // The next three fields track where this receiver stands in one incarnation of the stream key, and
@@ -41,18 +41,19 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
                                  Serializer serializer,
                                  TimeProvider? timeProvider = null,
                                  IOptions<RedisStreamReceiverOptions>? receiverOptions = null)
-            : this(queueId, database, logger, serializer, new RedisStreamTrimmer(queueId, database, logger, timeProvider ?? TimeProvider.System,
-                receiverOptions?.Value ?? new RedisStreamReceiverOptions(), new MinIdTrimSupport()))
+            : this(queueId, database, logger, new RedisStreamCodec(serializer, receiverOptions?.Value.PayloadFormat ?? default),
+                new RedisStreamTrimmer(queueId, database, logger, timeProvider ?? TimeProvider.System,
+                    receiverOptions?.Value ?? new RedisStreamReceiverOptions(), new MinIdTrimSupport()))
         {
         }
 
-        internal RedisStreamReceiver(QueueId queueId, IDatabase database, ILogger<RedisStreamReceiver> logger, Serializer serializer, RedisStreamTrimmer trimmer)
+        internal RedisStreamReceiver(QueueId queueId, IDatabase database, ILogger<RedisStreamReceiver> logger, RedisStreamCodec codec, RedisStreamTrimmer trimmer)
         {
             _queueId = queueId;
             _streamKey = RedisStreamWireFormat.StreamKey(queueId);
             _database = database ?? throw new ArgumentNullException(nameof(database));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
+            _codec = codec;
             _trimmer = trimmer;
         }
 
@@ -124,7 +125,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             unreadable = [];
             foreach (var entry in entries)
             {
-                if (RedisStreamWireFormat.TryDecode(entry, _serializer, out var batch, out var error))
+                if (_codec.TryDecode(entry, out var batch, out var error))
                 {
                     batches.Add(batch);
                 }

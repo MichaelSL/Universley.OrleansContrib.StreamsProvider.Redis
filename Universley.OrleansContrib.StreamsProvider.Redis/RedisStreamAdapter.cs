@@ -15,7 +15,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         private readonly ILogger<RedisStreamAdapter> _logger;
         private readonly IOptions<RedisStreamReceiverOptions> _receiverOptions;
         private readonly MinIdTrimSupport _minIdTrimSupport;
-        private readonly Serializer _serializer;
+        private readonly RedisStreamCodec _codec;
 
         public RedisStreamAdapter(IDatabase database,
                                 string providerName,
@@ -42,7 +42,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
             _logger = loggerFactory.CreateLogger<RedisStreamAdapter>();
             _receiverOptions = receiverOptions ?? throw new ArgumentNullException(nameof(receiverOptions));
-            _serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
+            _codec = new RedisStreamCodec(serializer, receiverOptions.Value.PayloadFormat);
             _minIdTrimSupport = minIdTrimSupport;
         }
 
@@ -56,7 +56,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         {
             var logger = _loggerFactory.CreateLogger<RedisStreamReceiver>();
             var trimmer = new RedisStreamTrimmer(queueId, _database, logger, TimeProvider.System, _receiverOptions.Value, _minIdTrimSupport);
-            return new RedisStreamReceiver(queueId, _database, logger, _serializer, trimmer);
+            return new RedisStreamReceiver(queueId, _database, logger, _codec, trimmer);
         }
 
         public async Task QueueMessageBatchAsync<T>(StreamId streamId, IEnumerable<T> events, StreamSequenceToken token, Dictionary<string, object> requestContext)
@@ -65,8 +65,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             {
                 var streamKey = RedisStreamWireFormat.StreamKey(_hashRingBasedStreamQueueMapper.GetQueueForStream(streamId));
                 // Serialized up front, so an event that cannot be serialized fails the call before anything is sent.
-                var format = _receiverOptions.Value.PayloadFormat;
-                var entries = events.Select(@event => RedisStreamWireFormat.Encode(streamId, @event, format, _serializer)).ToList();
+                var entries = events.Select(@event => _codec.Encode(streamId, @event)).ToList();
                 // One transaction, so a failed call leaves none of its events in the stream for a retry to duplicate.
                 var transaction = _database.CreateTransaction();
                 var added = entries.Select(entry => transaction.StreamAddAsync(streamKey, entry)).ToList();

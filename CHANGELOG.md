@@ -16,14 +16,17 @@ Events are serialized with the Orleans serializer instead of `System.Text.Json` 
 
 ### Added
 
-- `RedisStreamReceiverOptions.PayloadFormat`, with `OrleansCodec` (default) and the legacy `Json`. It applies to publishing; receivers read both formats.
-- `RedisStreamBatchContainer.Event`, the deserialized event of an entry in the Orleans format.
+- `RedisStreamReceiverOptions.PayloadFormat`, with `OrleansCodec` (default) and the legacy `Json`. It applies to publishing; receivers read both formats. An undefined value throws when the adapter or receiver is created.
 
 ### Changed
 
 - A payload the Orleans serializer cannot read is treated as an unreadable entry: logged at error level with the exception, acknowledged and skipped, instead of faulting the subscription at delivery.
-- `RedisStreamFactory`, `RedisStreamAdapter`, `RedisStreamReceiver` and `RedisStreamBatchContainer(StreamEntry)` take the Orleans `Serializer`. `RedisStreamFactory.Create` resolves it from the service provider, so configuration through `AddPersistentStreams` is unchanged.
-- `RedisStreamBatchContainer.EventType` and `Data` are nullable; they are set only for entries in the legacy JSON format.
+- `RedisStreamFactory`, `RedisStreamAdapter` and `RedisStreamReceiver` take the Orleans `Serializer`. `RedisStreamFactory.Create` resolves it from the service provider, so configuration through `AddPersistentStreams` is unchanged.
+- The unreadable-entry error log now says why the entry could not be read, such as which field is missing.
+
+### Removed
+
+- `RedisStreamBatchContainer(StreamEntry)`, and the container's `EventType` and `Data` properties. Batch containers are created only by the receiver; events are read with `GetEvents<T>()` as before.
 
 ## 2026.10.26
 

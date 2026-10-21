@@ -27,7 +27,7 @@ namespace RedisStreamsProvider.UnitTests
             _mockLoggerFactory.Setup(factory => factory.CreateLogger(It.IsAny<string>())).Returns(_mockLogger.Object);
             _mockReceiverOptions = new Mock<IOptions<RedisStreamReceiverOptions>>();
             _mockReceiverOptions.Setup(o => o.Value).Returns(new RedisStreamReceiverOptions()); // Provide default options
-            _adapter = new RedisStreamAdapter(_mockDatabase.Object, "TestProvider", _mockQueueMapper.Object, _mockLoggerFactory.Object, _mockReceiverOptions.Object);
+            _adapter = new RedisStreamAdapter(_mockDatabase.Object, "TestProvider", _mockQueueMapper.Object, _mockLoggerFactory.Object, _mockReceiverOptions.Object, TestSerializer.Instance);
         }
 
         [Fact]

@@ -24,6 +24,22 @@ public sealed class ReceiverTests(RedisFixture redis)
     }
 
     [Fact]
+    public async Task Entries_in_both_payload_formats_are_read_from_one_stream()
+    {
+        var harness = new ProviderHarness(redis.Connection);
+        var receiver = harness.CreateReceiver();
+        await receiver.Initialize(TimeSpan.FromSeconds(5));
+        harness.ReceiverOptions.PayloadFormat = RedisStreamPayloadFormat.Json;
+        await harness.PublishAsync(new TestEvent(1, "json"));
+        harness.ReceiverOptions.PayloadFormat = RedisStreamPayloadFormat.OrleansCodec;
+        await harness.PublishAsync(new TestEvent(2, "codec"));
+
+        var read = await ProviderHarness.ReadAsync(receiver, expected: 2);
+
+        Assert.Equal([new TestEvent(1, "json"), new TestEvent(2, "codec")], read.SelectMany(b => b.GetEvents<TestEvent>()).Select(e => e.Item1));
+    }
+
+    [Fact]
     public async Task Unreadable_entry_does_not_block_the_valid_entries_read_with_it()
     {
         var harness = new ProviderHarness(redis.Connection);

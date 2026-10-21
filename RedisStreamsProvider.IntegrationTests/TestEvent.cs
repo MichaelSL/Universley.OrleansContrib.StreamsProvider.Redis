@@ -1,3 +1,4 @@
 namespace RedisStreamsProvider.IntegrationTests;
 
-public sealed record TestEvent(int Id, string Name);
+[GenerateSerializer]
+public sealed record TestEvent([property: Id(0)] int Id, [property: Id(1)] string Name);

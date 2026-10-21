@@ -43,3 +43,39 @@ public sealed class EventCollectorGrain : Grain, IEventCollectorGrain, IAsyncObs
 
     public Task OnErrorAsync(Exception ex) => Task.CompletedTask;
 }
+
+public interface ICollectedEvent
+{
+    int Id { get; }
+}
+
+[GenerateSerializer]
+public sealed record CollectedEvent([property: Id(0)] int Id) : ICollectedEvent;
+
+public interface IInterfaceCollectorGrain : IGrainWithStringKey
+{
+}
+
+/// <summary>Subscribes with an interface, so it receives only events the provider matches by assignability.</summary>
+[ImplicitStreamSubscription(StreamNamespace)]
+public sealed class InterfaceCollectorGrain : Grain, IInterfaceCollectorGrain, IAsyncObserver<ICollectedEvent>
+{
+    public const string StreamNamespace = "it-interface-collector";
+
+    public override async Task OnActivateAsync(CancellationToken cancellationToken)
+    {
+        var streamId = StreamId.Create(StreamNamespace, this.GetPrimaryKeyString());
+        await this.GetStreamProvider(ClusterFixture.ProviderName).GetStream<ICollectedEvent>(streamId).SubscribeAsync(this);
+        await base.OnActivateAsync(cancellationToken);
+    }
+
+    public Task OnNextAsync(ICollectedEvent item, StreamSequenceToken? token = null)
+    {
+        ReceivedEvents.Record(this.GetPrimaryKeyString(), item.Id);
+        return Task.CompletedTask;
+    }
+
+    public Task OnCompletedAsync() => Task.CompletedTask;
+
+    public Task OnErrorAsync(Exception ex) => Task.CompletedTask;
+}

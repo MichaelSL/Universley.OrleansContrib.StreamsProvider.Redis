@@ -1,7 +1,10 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using Moq;
 using Moq.Language.Flow;
+using Orleans.Configuration;
 using Orleans.Streams;
 using StackExchange.Redis;
 using Universley.OrleansContrib.StreamsProvider.Redis;
@@ -14,17 +17,19 @@ namespace RedisStreamsProvider.UnitTests
         private readonly Mock<ILogger<RedisStreamReceiver>> _mockLogger = new();
         private readonly QueueId _queueId = QueueId.GetQueueId("testQueue", 0, 0);
 
-        private RedisStreamReceiver CreateReceiver() => new(_queueId, _mockDatabase.Object, _mockLogger.Object, new RedisStreamCodec(TestSerializer.Instance),
-            new RedisStreamTrimmer(_queueId, _mockDatabase.Object, _mockLogger.Object, TimeProvider.System, new RedisStreamReceiverOptions(), new MinIdTrimSupport()));
+        private RedisStreamReceiver CreateReceiver(RedisStreamReceiverOptions? options = null, TimeProvider? timeProvider = null) =>
+            new RedisStreamAdapter(_mockDatabase.Object, "TestProvider",
+                    new HashRingBasedStreamQueueMapper(new HashRingStreamQueueMapperOptions(), "TestProvider"), NullLoggerFactory.Instance,
+                    Options.Create(options ?? new RedisStreamReceiverOptions()), Options.Create(new RedisStreamPublisherOptions()), TestSerializer.Instance)
+                .CreateReceiver(_queueId, _mockLogger.Object, timeProvider ?? TimeProvider.System);
 
         /// <summary>A MaxLength-trimming receiver whose first trim is already due.</summary>
         private RedisStreamReceiver CreateReceiverWithTrimDue()
         {
             var time = new FakeTimeProvider();
-            var options = new RedisStreamReceiverOptions { TrimTimeMinutes = 1, TrimStrategy = RedisStreamTrimStrategy.MaxLength };
-            var trimmer = new RedisStreamTrimmer(_queueId, _mockDatabase.Object, _mockLogger.Object, time, options, new MinIdTrimSupport());
+            var receiver = CreateReceiver(new RedisStreamReceiverOptions { TrimTimeMinutes = 1, TrimStrategy = RedisStreamTrimStrategy.MaxLength }, time);
             time.Advance(TimeSpan.FromMinutes(2));
-            return new RedisStreamReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object, new RedisStreamCodec(TestSerializer.Instance), trimmer);
+            return receiver;
         }
 
         private ISetup<IDatabase, Task<long>> SetupMaxLengthTrim() =>

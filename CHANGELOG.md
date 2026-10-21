@@ -16,11 +16,12 @@ Events are serialized with the Orleans serializer instead of `System.Text.Json` 
 
 ### Added
 
-- `RedisStreamPublisherOptions`, configured by provider name like `RedisStreamReceiverOptions`, with `PayloadFormat`: `OrleansCodec` (default) or the legacy `Json`. Receivers read both formats. Setting an undefined value throws.
+- `RedisStreamPublisherOptions`, configured by provider name like `RedisStreamReceiverOptions`, with `PayloadFormat`: `OrleansCodec` (default) or the legacy `Json`. Receivers read both formats. An undefined value fails when the provider starts.
 
 ### Changed
 
-- A payload the Orleans serializer cannot read, or an entry in a payload format this version does not know, is treated as an unreadable entry: logged at error level with the exception, acknowledged and skipped, instead of faulting the subscription at delivery.
+- A payload the Orleans serializer cannot read, or an entry in a payload format this version does not know, is treated as an unreadable entry: logged at error level with the exception, acknowledged and skipped, instead of faulting the subscription at delivery. This includes an event type the silo reading the queue does not have, so deploy new event types to every silo before publishing them.
+- Only entries the provider knows to be unreadable are acknowledged without delivery. Any other error while reading an entry fails the read and leaves its entries pending, to be delivered after the next restart or queue handoff.
 - `RedisStreamFactory` and `RedisStreamAdapter` take `IOptions<RedisStreamPublisherOptions>` and the Orleans `Serializer`. `RedisStreamFactory.Create` resolves it from the service provider, so configuration through `AddPersistentStreams` is unchanged.
 - The unreadable-entry error log now says why the entry could not be read, such as which field is missing.
 

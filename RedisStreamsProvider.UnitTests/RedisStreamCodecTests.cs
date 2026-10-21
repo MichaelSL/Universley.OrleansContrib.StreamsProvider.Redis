@@ -9,12 +9,12 @@ namespace RedisStreamsProvider.UnitTests
     public class RedisStreamCodecTests
     {
         private static readonly StreamId Stream = StreamId.Create("namespace", "key");
-        private static readonly RedisStreamCodec Codec = new(TestSerializer.Instance);
+        private static readonly RedisStreamCodec Codec = CodecFor(RedisStreamPayloadFormat.OrleansCodec);
 
         [Fact]
         public void Constructor_ShouldThrowArgumentNullException_WhenSerializerIsNull()
         {
-            Assert.Throws<ArgumentNullException>(() => new RedisStreamCodec(null!));
+            Assert.Throws<ArgumentNullException>(() => new RedisStreamCodec(null!, RedisStreamPayloadFormat.OrleansCodec));
         }
 
         [Theory]
@@ -62,9 +62,10 @@ namespace RedisStreamsProvider.UnitTests
         }
 
         [Fact]
-        public void Encode_Throws_ForAnUndefinedFormat()
+        public void Constructor_Throws_ForAnUndefinedFormat()
         {
-            Assert.Throws<ArgumentOutOfRangeException>(() => Encode(new TestEvent(1, "one"), (RedisStreamPayloadFormat)42));
+            var error = Assert.Throws<ArgumentOutOfRangeException>(() => CodecFor((RedisStreamPayloadFormat)42));
+            Assert.Contains("Unknown PayloadFormat", error.Message);
         }
 
         [Fact]
@@ -75,7 +76,7 @@ namespace RedisStreamsProvider.UnitTests
                 .Select(f => f.Name == RedisStreamWireFormat.FormatField ? new NameValueEntry(f.Name, "orleans2") : f)
                 .ToArray();
 
-            var error = Assert.Throws<FormatException>(() => Codec.Decode(new StreamEntry("1-0", fields)));
+            var error = Assert.Throws<RedisStreamUnreadableEntryException>(() => Codec.Decode(new StreamEntry("1-0", fields)));
             Assert.Contains("unknown format orleans2", error.Message);
         }
 
@@ -105,7 +106,7 @@ namespace RedisStreamsProvider.UnitTests
             var fields = Encode(new TestEvent(1, "one"), format);
             var entry = new StreamEntry("1-0", fields.Where(f => f.Name != missingField).ToArray());
 
-            var error = Assert.Throws<FormatException>(() => Codec.Decode(entry));
+            var error = Assert.Throws<RedisStreamUnreadableEntryException>(() => Codec.Decode(entry));
             Assert.Contains($"has no {missingField} field", error.Message);
         }
 
@@ -128,7 +129,31 @@ namespace RedisStreamsProvider.UnitTests
                 new(RedisStreamWireFormat.DataField, new byte[] { 0xff, 0xfe, 0x01 }),
             ]);
 
-            Assert.ThrowsAny<Exception>(() => Codec.Decode(entry));
+            var error = Assert.Throws<RedisStreamUnreadableEntryException>(() => Codec.Decode(entry));
+            Assert.Contains("payload the Orleans serializer cannot read", error.Message);
+            Assert.NotNull(error.InnerException);
+        }
+
+        [Fact]
+        public void Decode_Throws_ForAnEventTypeThisSiloDoesNotHave()
+        {
+            // As when an event type is published before every silo has it: the payload names a type no assembly here has.
+            var fields = Encode(new TestEvent(1, "one"), RedisStreamPayloadFormat.OrleansCodec)
+                .Select(f => f.Name == RedisStreamWireFormat.DataField ? new NameValueEntry(f.Name, RenameType((byte[])f.Value!)) : f)
+                .ToArray();
+
+            var error = Assert.Throws<RedisStreamUnreadableEntryException>(() => Codec.Decode(new StreamEntry("1-0", fields)));
+            Assert.Contains("payload the Orleans serializer cannot read", error.Message);
+        }
+
+        private static byte[] RenameType(byte[] payload)
+        {
+            var name = System.Text.Encoding.UTF8.GetBytes(typeof(TestEvent).FullName!);
+            var at = payload.AsSpan().IndexOf(name);
+            Assert.True(at >= 0, "the payload names the event type");
+            var renamed = payload.ToArray();
+            renamed[at + name.Length - 1] = (byte)'X';
+            return renamed;
         }
 
         [Theory]
@@ -140,7 +165,7 @@ namespace RedisStreamsProvider.UnitTests
         {
             var entry = new StreamEntry(id, Encode(new TestEvent(1, "one"), RedisStreamPayloadFormat.OrleansCodec));
 
-            var error = Assert.Throws<FormatException>(() => Codec.Decode(entry));
+            var error = Assert.Throws<RedisStreamUnreadableEntryException>(() => Codec.Decode(entry));
             Assert.Contains($"id {id} is malformed", error.Message);
         }
 
@@ -148,10 +173,12 @@ namespace RedisStreamsProvider.UnitTests
         public void Decode_Throws_ForAnEntryDeletedWhilePending()
         {
             // Redis returns such an entry with its id and no fields.
-            Assert.Throws<FormatException>(() => Codec.Decode(new StreamEntry("1-0", [])));
+            Assert.Throws<RedisStreamUnreadableEntryException>(() => Codec.Decode(new StreamEntry("1-0", [])));
         }
 
+        private static RedisStreamCodec CodecFor(RedisStreamPayloadFormat format) => new(TestSerializer.Instance, format);
+
         private static NameValueEntry[] Encode<T>(T @event, RedisStreamPayloadFormat format) =>
-            Codec.Encode(Stream, @event, format);
+            CodecFor(format).Encode(Stream, @event);
     }
 }

@@ -29,9 +29,10 @@ public sealed class ReceiverTests(RedisFixture redis)
         var harness = new ProviderHarness(redis.Connection);
         var receiver = harness.CreateReceiver();
         await receiver.Initialize(TimeSpan.FromSeconds(5));
-        var codec = new RedisStreamCodec(ProviderHarness.Serializer);
-        await harness.Database.StreamAddAsync(harness.Key, codec.Encode(harness.StreamId, new TestEvent(1, "json"), RedisStreamPayloadFormat.Json));
-        await harness.Database.StreamAddAsync(harness.Key, codec.Encode(harness.StreamId, new TestEvent(2, "codec"), RedisStreamPayloadFormat.OrleansCodec));
+        var json = new RedisStreamCodec(ProviderHarness.Serializer, RedisStreamPayloadFormat.Json);
+        var orleans = new RedisStreamCodec(ProviderHarness.Serializer, RedisStreamPayloadFormat.OrleansCodec);
+        await harness.Database.StreamAddAsync(harness.Key, json.Encode(harness.StreamId, new TestEvent(1, "json")));
+        await harness.Database.StreamAddAsync(harness.Key, orleans.Encode(harness.StreamId, new TestEvent(2, "codec")));
 
         var read = await ProviderHarness.ReadAsync(receiver, expected: 2);
 

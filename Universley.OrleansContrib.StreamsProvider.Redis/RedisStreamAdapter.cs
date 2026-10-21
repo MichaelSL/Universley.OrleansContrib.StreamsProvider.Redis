@@ -16,7 +16,6 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
         private readonly IOptions<RedisStreamReceiverOptions> _receiverOptions;
         private readonly MinIdTrimSupport _minIdTrimSupport;
         private readonly RedisStreamCodec _codec;
-        private readonly RedisStreamPayloadFormat _payloadFormat;
 
         public RedisStreamAdapter(IDatabase database,
                                 string providerName,
@@ -45,8 +44,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
             _logger = loggerFactory.CreateLogger<RedisStreamAdapter>();
             _receiverOptions = receiverOptions ?? throw new ArgumentNullException(nameof(receiverOptions));
-            _codec = new RedisStreamCodec(serializer);
-            _payloadFormat = (publisherOptions ?? throw new ArgumentNullException(nameof(publisherOptions))).Value.PayloadFormat;
+            _codec = new RedisStreamCodec(serializer, (publisherOptions ?? throw new ArgumentNullException(nameof(publisherOptions))).Value.PayloadFormat);
             _minIdTrimSupport = minIdTrimSupport;
         }
 
@@ -56,10 +54,12 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
 
         public StreamProviderDirection Direction => StreamProviderDirection.ReadWrite;
 
-        public IQueueAdapterReceiver CreateReceiver(QueueId queueId)
+        public IQueueAdapterReceiver CreateReceiver(QueueId queueId) =>
+            CreateReceiver(queueId, _loggerFactory.CreateLogger<RedisStreamReceiver>(), TimeProvider.System);
+
+        internal RedisStreamReceiver CreateReceiver(QueueId queueId, ILogger<RedisStreamReceiver> logger, TimeProvider timeProvider)
         {
-            var logger = _loggerFactory.CreateLogger<RedisStreamReceiver>();
-            var trimmer = new RedisStreamTrimmer(queueId, _database, logger, TimeProvider.System, _receiverOptions.Value, _minIdTrimSupport);
+            var trimmer = new RedisStreamTrimmer(queueId, _database, logger, timeProvider, _receiverOptions.Value, _minIdTrimSupport);
             return new RedisStreamReceiver(queueId, _database, logger, _codec, trimmer);
         }
 
@@ -69,7 +69,7 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
             {
                 var streamKey = RedisStreamWireFormat.StreamKey(_hashRingBasedStreamQueueMapper.GetQueueForStream(streamId));
                 // Serialized up front, so an event that cannot be serialized fails the call before anything is sent.
-                var entries = events.Select(@event => _codec.Encode(streamId, @event, _payloadFormat)).ToList();
+                var entries = events.Select(@event => _codec.Encode(streamId, @event)).ToList();
                 // One transaction, so a failed call leaves none of its events in the stream for a retry to duplicate.
                 var transaction = _database.CreateTransaction();
                 var added = entries.Select(entry => transaction.StreamAddAsync(streamKey, entry)).ToList();

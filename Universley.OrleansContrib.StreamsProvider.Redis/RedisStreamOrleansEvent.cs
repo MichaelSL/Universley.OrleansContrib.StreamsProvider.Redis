@@ -3,14 +3,14 @@ using System.Diagnostics.CodeAnalysis;
 namespace Universley.OrleansContrib.StreamsProvider.Redis
 {
     /// <summary>
-    /// The payload of an entry in <see cref="RedisStreamPayloadFormat.OrleansCodec"/>. It is stored in Redis, so its alias
-    /// and field ids are part of the wire format; new fields can be added with new ids.
+    /// The event of an entry in <see cref="RedisStreamPayloadFormat.OrleansCodec"/>, which is also the payload stored in
+    /// Redis: its alias and field ids are part of the wire format, and new fields can be added with new ids.
     /// </summary>
     [GenerateSerializer]
-    [Alias("Universley.OrleansContrib.StreamsProvider.Redis.RedisStreamEventBody")]
-    internal sealed class RedisStreamEventBody : IRedisStreamEvent
+    [Alias("Universley.OrleansContrib.StreamsProvider.Redis.RedisStreamOrleansEvent")]
+    internal sealed class RedisStreamOrleansEvent : IRedisStreamEvent
     {
-        public RedisStreamEventBody(object @event)
+        public RedisStreamOrleansEvent(object @event)
         {
             Event = @event;
         }

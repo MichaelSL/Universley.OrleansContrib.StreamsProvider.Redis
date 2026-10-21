@@ -45,12 +45,8 @@ internal sealed class ProviderHarness
 
     public StreamId StreamId { get; } = StreamId.Create("it-namespace", "it-key");
 
-    public RedisStreamReceiver CreateReceiver(TimeProvider? timeProvider = null, ILogger<RedisStreamReceiver>? logger = null)
-    {
-        logger ??= NullLogger<RedisStreamReceiver>.Instance;
-        var trimmer = new RedisStreamTrimmer(QueueId, Database, logger, timeProvider ?? TimeProvider.System, ReceiverOptions, new MinIdTrimSupport());
-        return new(QueueId, Database, logger, new RedisStreamCodec(Serializer), trimmer);
-    }
+    public RedisStreamReceiver CreateReceiver(TimeProvider? timeProvider = null, ILogger<RedisStreamReceiver>? logger = null) =>
+        Adapter.CreateReceiver(QueueId, logger ?? NullLogger<RedisStreamReceiver>.Instance, timeProvider ?? TimeProvider.System);
 
     /// <summary>A factory for a provider with one queue, whose stream key no other test uses.</summary>
     public static RedisStreamFactory CreateFactory(IConnectionMultiplexer connection, ILoggerFactory loggerFactory, RedisStreamReceiverOptions receiverOptions) =>

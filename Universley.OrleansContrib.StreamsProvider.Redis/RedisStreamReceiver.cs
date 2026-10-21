@@ -115,10 +115,11 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
                 {
                     batches.Add(_codec.Decode(entry));
                 }
-                catch (Exception error)
+                catch (RedisStreamUnreadableEntryException error)
                 {
                     // This entry can never be delivered, and leaving it pending would keep it (and everything read
-                    // with it) stuck.
+                    // with it) stuck. Any other error fails the whole read and leaves its entries pending, for the
+                    // next owner of the queue to read again.
                     _logger.LogError(error, "Acknowledging unreadable entry {EntryId} in stream {QueueId} without delivering it", entry.Id, _queueId);
                     unreadable.Add(entry.Id);
                 }

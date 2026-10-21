@@ -53,6 +53,20 @@ namespace RedisStreamsProvider.UnitTests
         }
 
         [Fact]
+        public void GetEvents_LegacyJson_ReturnsNothing_ForASubscriberToATypeWithAnotherShortName()
+        {
+            var container = Codec.Decode(new StreamEntry("1-0", new NameValueEntry[]
+            {
+                new(RedisStreamWireFormat.StreamNamespaceField, "testNamespace"),
+                new(RedisStreamWireFormat.StreamKeyField, "testKey"),
+                new(RedisStreamWireFormat.EventTypeField, "TestEvent"),
+                new(RedisStreamWireFormat.DataField, JsonSerializer.Serialize(new TestEvent { Id = 1, Name = "Test" }))
+            }));
+
+            Assert.Empty(container.GetEvents<DerivedTestEvent>());
+        }
+
+        [Fact]
         public void ImportRequestContext_ShouldReturnFalse()
         {
             // Arrange
@@ -103,7 +117,7 @@ namespace RedisStreamsProvider.UnitTests
         public void RoundTripsThroughTheOrleansSerializer_AsWhenDeliveredToAConsumerOnAnotherSilo()
         {
             var orleans = RoundTrip(Encoded(new UnitTests.TestEvent(1, "one"), "5-3"));
-            var legacy = RoundTrip(Codec.Decode(new StreamEntry("1-0", Codec.Encode(StreamId.Create("testNamespace", "testKey"), new UnitTests.TestEvent(2, "two"), RedisStreamPayloadFormat.Json))));
+            var legacy = RoundTrip(Codec.Decode(new StreamEntry("1-0", new RedisStreamCodec(TestSerializer.Instance, RedisStreamPayloadFormat.Json).Encode(StreamId.Create("testNamespace", "testKey"), new UnitTests.TestEvent(2, "two")))));
 
             Assert.Equal("5-3", orleans.StreamEntryId);
             Assert.Equal(new RedisStreamSequenceToken(5, 3), orleans.SequenceToken);
@@ -114,11 +128,10 @@ namespace RedisStreamsProvider.UnitTests
         private static RedisStreamBatchContainer RoundTrip(RedisStreamBatchContainer container) =>
             TestSerializer.Instance.Deserialize<RedisStreamBatchContainer>(TestSerializer.Instance.SerializeToArray(container));
 
-        private static readonly RedisStreamCodec Codec = new(TestSerializer.Instance);
-
+        private static readonly RedisStreamCodec Codec = new(TestSerializer.Instance, RedisStreamPayloadFormat.OrleansCodec);
 
         private static RedisStreamBatchContainer Encoded<T>(T @event, string id = "1-0") =>
-            Codec.Decode(new StreamEntry(id, Codec.Encode(StreamId.Create("testNamespace", "testKey"), @event, RedisStreamPayloadFormat.OrleansCodec)));
+            Codec.Decode(new StreamEntry(id, Codec.Encode(StreamId.Create("testNamespace", "testKey"), @event)));
 
         // A plain class, as earlier versions required: legacy JSON entries need no Orleans serializer.
         private class TestEvent

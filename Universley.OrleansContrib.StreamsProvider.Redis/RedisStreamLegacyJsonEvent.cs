@@ -6,7 +6,8 @@ namespace Universley.OrleansContrib.StreamsProvider.Redis
     /// <summary>
     /// The event of an entry in the legacy <see cref="RedisStreamPayloadFormat.Json"/> format. JSON can only be
     /// deserialized once the subscriber's type is known, so it is kept as is and matched to subscribers by
-    /// <see cref="TypeName"/>, the short name of the published type.
+    /// <see cref="TypeName"/>, the short name of the published type. Unlike <see cref="RedisStreamOrleansEvent"/>, it is
+    /// never stored in Redis: its alias only names it when a batch container is delivered to a consumer on another silo.
     /// </summary>
     [GenerateSerializer]
     [Alias("Universley.OrleansContrib.StreamsProvider.Redis.RedisStreamLegacyJsonEvent")]

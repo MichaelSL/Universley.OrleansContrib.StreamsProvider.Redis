@@ -96,7 +96,7 @@ namespace RedisStreamsProvider.UnitTests
             var entry = new StreamEntry("1-0", fields.Where(f => f.Name != missingField).ToArray());
 
             Assert.False(Codec.TryDecode(entry, out _, out var error));
-            Assert.IsType<FormatException>(error);
+            Assert.Contains($"has no {missingField} field", Assert.IsType<FormatException>(error).Message);
         }
 
         [Fact]
@@ -131,7 +131,8 @@ namespace RedisStreamsProvider.UnitTests
         {
             var entry = new StreamEntry(id, Encode(new TestEvent(1, "one"), RedisStreamPayloadFormat.OrleansCodec));
 
-            Assert.False(Codec.TryDecode(entry, out _, out _));
+            Assert.False(Codec.TryDecode(entry, out _, out var error));
+            Assert.Contains($"id {id} is malformed", Assert.IsType<FormatException>(error).Message);
         }
 
         [Fact]

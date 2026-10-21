@@ -14,7 +14,7 @@ namespace RedisStreamsProvider.UnitTests
         private readonly Mock<ILogger<RedisStreamReceiver>> _mockLogger = new();
         private readonly QueueId _queueId = QueueId.GetQueueId("testQueue", 0, 0);
 
-        private RedisStreamReceiver CreateReceiver() => new(_queueId, _mockDatabase.Object, _mockLogger.Object);
+        private RedisStreamReceiver CreateReceiver() => new(_queueId, _mockDatabase.Object, _mockLogger.Object, TestSerializer.Instance);
 
         /// <summary>A MaxLength-trimming receiver whose first trim is already due.</summary>
         private RedisStreamReceiver CreateReceiverWithTrimDue()
@@ -23,7 +23,7 @@ namespace RedisStreamsProvider.UnitTests
             var options = new RedisStreamReceiverOptions { TrimTimeMinutes = 1, TrimStrategy = RedisStreamTrimStrategy.MaxLength };
             var trimmer = new RedisStreamTrimmer(_queueId, _mockDatabase.Object, _mockLogger.Object, time, options, new MinIdTrimSupport());
             time.Advance(TimeSpan.FromMinutes(2));
-            return new RedisStreamReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object, trimmer);
+            return new RedisStreamReceiver(_queueId, _mockDatabase.Object, _mockLogger.Object, new RedisStreamCodec(TestSerializer.Instance, RedisStreamPayloadFormat.OrleansCodec), trimmer);
         }
 
         private ISetup<IDatabase, Task<long>> SetupMaxLengthTrim() =>
@@ -45,7 +45,8 @@ namespace RedisStreamsProvider.UnitTests
         ]);
 
         private static List<IBatchContainer> Delivered(params string[] ids) =>
-            ids.Select(id => (IBatchContainer)new RedisStreamBatchContainer(Entry(id))).ToList();
+            ids.Select(id => (IBatchContainer)new RedisStreamBatchContainer(StreamId.Create("testNamespace", "testKey"),
+                new RedisStreamSequenceToken(id), new RedisStreamLegacyJsonEvent("testEventType", "testData"), id)).ToList();
 
         private static string[] Ids(IList<IBatchContainer>? batches) =>
             batches!.Cast<RedisStreamBatchContainer>().Select(b => b.StreamEntryId).ToArray();
@@ -208,6 +209,32 @@ namespace RedisStreamsProvider.UnitTests
                     It.Is<RedisValue[]>(ids => ids.Length == 1 && ids[0] == "2-0"),
                     It.IsAny<CommandFlags>()),
                 Times.Once);
+        }
+
+        [Fact]
+        public async Task GetQueueMessagesAsync_SkipsAcknowledgesAndLogs_PayloadsTheSerializerCannotRead()
+        {
+            // Arrange
+            var garbled = new StreamEntry("2-0", [
+                new(RedisStreamWireFormat.StreamNamespaceField, "testNamespace"),
+                new(RedisStreamWireFormat.StreamKeyField, "testKey"),
+                new(RedisStreamWireFormat.FormatField, RedisStreamWireFormat.OrleansCodecFormat),
+                new(RedisStreamWireFormat.DataField, new byte[] { 0xff, 0xfe, 0x01 })
+            ]);
+            SetupAnyRead().Returns(Reply(Entry("1-0"), garbled, Entry("3-0")));
+            var receiver = CreateReceiver();
+
+            // Act
+            var result = await receiver.GetQueueMessagesAsync(10);
+
+            // Assert
+            Assert.Equal(new[] { "1-0", "3-0" }, Ids(result));
+            _mockDatabase.Verify(db => db.StreamAcknowledgeAsync(
+                    _queueId.ToString(), RedisStreamWireFormat.GroupName,
+                    It.Is<RedisValue[]>(ids => ids.Length == 1 && ids[0] == "2-0"),
+                    It.IsAny<CommandFlags>()),
+                Times.Once);
+            _mockLogger.VerifyLogged(LogLevel.Error, "unreadable entry 2-0", Times.Once(), e => e is not null);
         }
 
         [Fact]
